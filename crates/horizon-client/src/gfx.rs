@@ -591,12 +591,20 @@ pub(crate) const SPRITE_SPLIT: u32 = 2048;
 /// [`SPRITE_SPLIT`], or a smaller split from `HORIZON_SPRITE_SPLIT` (dev
 /// only: vanilla's sprites drawn from several arrays must look the same).
 fn sprite_split() -> u32 {
-    std::env::var("HORIZON_SPRITE_SPLIT")
+    let split = std::env::var("HORIZON_SPRITE_SPLIT")
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|&n| (1..=SPRITE_SPLIT).contains(&n))
-        .unwrap_or(SPRITE_SPLIT)
+        .unwrap_or(SPRITE_SPLIT);
+    // The browser build: a page's WebGPU may give fewer layers per array
+    // (256 is the WebGPU default), so the sprites spread over more arrays.
+    match WEB_LAYERS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => split,
+        layers => split.min(layers),
+    }
 }
+/// The browser build's adapter limit on texture array layers (`web_open_gpu`); 0 natively.
+static WEB_LAYERS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// Sprite arrays terrain.wgsl binds (`sprites`, `sprites_1`...).
 const SPRITE_ARRAYS: u32 = 8;
 /// The layers to give a square texture of `count` layers viewed as a 2D
@@ -928,6 +936,9 @@ async fn open_device(
 // and device, so the page's start-up opens them here, before the game, and
 // every renderer shares them (`open_device`).
 #[cfg(target_arch = "wasm32")]
+/// The browser build: a submitted frame the GPU has not finished yet.
+#[cfg(target_arch = "wasm32")]
+static WEB_FRAME_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 thread_local! {
     static WEB_GPU: std::cell::RefCell<Option<(wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue)>> =
         const { std::cell::RefCell::new(None) };
@@ -937,6 +948,10 @@ thread_local! {
 #[cfg(target_arch = "wasm32")]
 pub async fn web_open_gpu() -> Result<()> {
     let opened = open_device_on(None, true, GraphicsApi::Auto, 1).await?;
+    WEB_LAYERS.store(
+        opened.device.limits().max_texture_array_layers,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     WEB_GPU.with(|gpu| {
         *gpu.borrow_mut() = Some((opened.instance, opened.adapter, opened.device, opened.queue))
     });
@@ -3626,6 +3641,14 @@ impl Renderer {
             startup_step(format_args!("acquiring the first frame"));
             self.first_frame = FirstFrame::Submit;
         }
+        // The browser build (docs/web.md): the page can submit frames faster
+        // than the GPU draws them, and nothing pushes back, so they would
+        // queue up without end (memory, and seconds of lag). One frame in
+        // flight: the next waits until the GPU finished the last.
+        #[cfg(target_arch = "wasm32")]
+        if WEB_FRAME_IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(false);
+        }
         let acquire = Instant::now();
         let acquired = self.surface.as_ref().map(|s| s.get_current_texture());
         self.last_wait = acquire.elapsed();
@@ -5289,6 +5312,13 @@ impl Renderer {
             self.first_frame = FirstFrame::Drawn;
         }
         let submission = crate::spans::time("submit", || self.queue.submit([commands]));
+        #[cfg(target_arch = "wasm32")]
+        {
+            use std::sync::atomic::Ordering;
+            WEB_FRAME_IN_FLIGHT.store(true, Ordering::Release);
+            self.queue
+                .on_submitted_work_done(|| WEB_FRAME_IN_FLIGHT.store(false, Ordering::Release));
+        }
         if let Some(cull) = &mut self.cull {
             cull.submitted();
         }

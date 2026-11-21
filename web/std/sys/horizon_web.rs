@@ -78,3 +78,39 @@ pub fn persist(path: &str, data: &[u8]) {
 pub fn forget(path: &str) {
     unsafe { fs_forget(path.as_ptr(), path.len()) }
 }
+
+/// The game's long-running threads: loops that serve the game for as long as
+/// it runs (network, servers, background workers). The browser build has one
+/// thread, so these fail to start, as on any platform without threads, and the
+/// game goes on without them (each site handles it). Every other thread is a
+/// piece of work the caller waits for, and runs at once, on the calling thread.
+const LONG_RUNNING: &[&str] = &[
+    "Server thread",
+    "Server console handler",
+    "horizon-net",
+    "horizon-local-conn",
+    "horizon-lan-",
+    "horizon-control",
+    "horizon-ping",
+    "horizon-region-writer",
+    "horizon-benchmark",
+    "Log writer",
+    "Heartbeat",
+    "Discord presence",
+    "Services keys",
+    "Chunk decoder",
+    "Far terrain",
+    "Far sampling",
+    "Far decoration",
+    "Ring search",
+    "occlusion",
+    "sound decoder",
+    "download-queue",
+];
+
+pub fn runs_inline(name: Option<&str>) -> bool {
+    match name {
+        Some(name) => !LONG_RUNNING.iter().any(|loop_name| name.starts_with(loop_name)),
+        None => true,
+    }
+}

@@ -24,13 +24,15 @@ fn main() {
 extern "C" {
     /// The page's error screen (web/page/boot.js).
     #[wasm_bindgen(js_namespace = horizon, js_name = fail)]
-    fn page_fail(message: &str);
+    pub(crate) fn page_fail(message: &str);
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn horizon_start() {
     horizon_client::web::init();
+    eprintln!("Horizon: starting in the browser");
+    log::info!("Horizon: logging to the page's console");
     wasm_bindgen_futures::spawn_local(async {
         if let Err(error) = game::run_web().await {
             log::error!("Horizon: {error}");

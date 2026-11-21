@@ -1141,7 +1141,8 @@ impl Streaming {
         // Decorate chunks whose 3x3 proto neighbourhood is available, in
         // vanilla's order: decoration is order dependent where write regions
         // overlap (see `DecorationOrder`).
-        let workers = self.threads.len();
+        // The browser build's inline worker counts as one.
+        let workers = self.threads.len() + usize::from(self.inline.is_some());
         if self.decorates && self.order_area != Some((self.center, self.radius)) {
             let (decorated, chunks) = (&self.decorated, &world.chunks);
             // The render distance is the server view distance in singleplayer.
@@ -1595,6 +1596,10 @@ impl Streaming {
     }
     /// The browser build (docs/web.md): runs queued jobs on this thread for
     /// up to `budget` (a frame's share); nothing on native, where workers do.
+    /// The browser build's heartbeat: queued jobs, chunks generating, protos.
+    pub fn web_stats(&self) -> (usize, usize, usize) {
+        (self.shared.queue.lock().unwrap().len(), self.generating.len(), self.protos.len())
+    }
     pub fn pump(&mut self, budget: std::time::Duration) {
         if let Some(inline) = self.inline.as_mut() {
             inline.pump(budget);

@@ -82,6 +82,24 @@ impl io::Write for Stdout {
         Ok(total_len)
     }""")
 
+    edit(sysdir / "stdio/unsupported.rs",
+         """    #[inline]
+    fn write_all(&mut self, _buf: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+
+    #[inline]
+    fn write_all_vectored(&mut self, _bufs: &mut [IoSlice<'_>]) -> io::Result<()> {
+        Ok(())
+    }""",
+         """    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.write(buf).map(|_| ())
+    }
+
+    fn write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> io::Result<()> {
+        self.write_vectored(bufs).map(|_| ())
+    }""")
+
     # One thread; sleeping waits on the clock (rare: the game never sleeps on the page's thread).
     edit(sysdir / "thread/unsupported.rs",
          "    Err(io::Error::UNKNOWN_THREAD_COUNT)",
@@ -93,8 +111,9 @@ impl io::Write for Stdout {
     while crate::sys::horizon_web::now() < end {}
 }""")
 
-    # Scoped threads (parallel work the caller waits for) run on the calling
-    # thread, at spawn; plain threads still fail to spawn (the game handles each).
+    # Scoped threads, and plain ones that are a piece of work the caller waits
+    # for, run on the calling thread, at spawn; the game's long-running threads
+    # still fail to spawn (horizon_web::LONG_RUNNING; the game handles each).
     edit(sysdir / "thread/unsupported.rs",
          "pub struct Thread(!);",
          "pub struct Thread(());\n\nimpl Thread {\n    /// A scoped thread that already ran on the calling thread.\n    pub fn finished() -> Thread {\n        Thread(())\n    }\n}")
@@ -105,15 +124,22 @@ impl io::Write for Stdout {
          "    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });\n",
          """    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });
 
-    // Horizon's browser build: no threads, so a scoped thread's work runs
-    // here, now; the scope then finds it finished.
+    // Horizon's browser build: no threads, so a scoped thread's work, or a
+    // plain thread that is not one of the game's loops, runs here, now; the
+    // caller then finds it finished.
     #[cfg(all(target_family = "wasm", target_os = "unknown", not(target_feature = "atomics")))]
-    if my_packet.scope.is_some() {
+    if my_packet.scope.is_some() || crate::sys::horizon_web::runs_inline(thread.name()) {
         let ThreadInit { rust_start, .. } = *init;
         rust_start();
         return Ok(JoinInner { native: imp::Thread::finished(), thread, packet: my_packet });
     }
 """)
+
+    # Waiting for another thread can never end on the only thread: say so
+    # (and where) instead of spinning forever.
+    edit(sysdir / "sync/thread_parking/unsupported.rs",
+         "    pub unsafe fn park(self: Pin<&Self>) {}",
+         '    pub unsafe fn park(self: Pin<&Self>) {\n        panic!("Horizon web: this waits for another thread, which the browser build cannot run");\n    }')
 
     # The working directory the in-memory file system resolves relative paths against.
     edit(sysdir / "paths/unsupported.rs",

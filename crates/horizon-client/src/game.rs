@@ -502,7 +502,7 @@ impl Options {
         Ok(Some(o))
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Screen {
     Playing,
     GameModeSwitcher,
@@ -13628,6 +13628,28 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // The browser build (docs/web.md): a heartbeat in the page's console,
+        // since a headless page's screenshots do not show the WebGPU canvas.
+        #[cfg(target_arch = "wasm32")]
+        {
+            static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap();
+            if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
+                *last = Some(Instant::now());
+                log::info!(
+                    "Horizon web: frame {}, world frames {}, screen {:?}, title {}, chunks {}, eye {:?}, spawn {:?}, jobs/generating/protos {:?}, radius {}",
+                    self.frames,
+                    self.world_frames,
+                    self.screen,
+                    self.title.is_some(),
+                    self.world.chunks.len(),
+                    self.eye_position(),
+                    self.spawn,
+                    self.streaming.web_stats(),
+                    self.streaming.radius,
+                );
+            }
+        }
         if horizon_threads::stop_requests() > 0
             && self.pending_save.as_ref().is_none_or(|save| !save.quit)
         {
@@ -13688,6 +13710,13 @@ impl ApplicationHandler for Game<'_> {
     /// applicationWillTerminate without a CloseRequested; vanilla's GLFW
     /// window turns it into a window close, so Minecraft.stop saves the world.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // The browser build: nothing returns from the page's event loop, so
+        // an error that stopped the game goes to the page's error screen here.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(error) = &self.error {
+            log::error!("Horizon: {error}");
+            crate::page_fail(&error.to_string());
+        }
         self.pad_close_output();
         if let Err(e) = self.save_for_exit() {
             log::warn!("Horizon: failed to save the world on exit: {e}");

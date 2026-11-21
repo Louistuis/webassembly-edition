@@ -239,7 +239,8 @@ pub(super) fn preload_world_data(
     let mut preload = PRELOAD.lock().unwrap_or_else(|e| e.into_inner());
     match &mut *preload {
         Preload::Used => {}
-        Preload::Idle if on_world_screens => {
+        // The browser build has no helper threads: the world reads it on opening.
+        Preload::Idle if on_world_screens && !cfg!(target_arch = "wasm32") => {
             let resources = resources.to_owned();
             let spawned = std::thread::Builder::new()
                 .name("World data preload".into())

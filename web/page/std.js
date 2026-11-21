@@ -30,9 +30,13 @@ export function now_ms() { return performance.now(); }
 export function epoch_ms() { return t0 + performance.now(); }
 
 let lastLine = '';
+export const lines = [];
 export function console(level, ptr, len) {
+  state.consoleCalls = (state.consoleCalls || 0) + 1;
   const line = text(ptr, len);
   lastLine = line;
+  lines.push(line);
+  if (lines.length > 1500) lines.shift();
   (level === 2 ? globalThis.console.error : globalThis.console.log)(line);
   globalThis.horizon?.log?.(line);
 }

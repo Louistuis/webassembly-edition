@@ -2,7 +2,7 @@
 // restores the player's saved files from the browser's storage, then hands
 // both to the game through std's file system (std.js) and starts it.
 import init, { horizon_start } from './horizon.js';
-import { state } from './std.js';
+import { state, lines } from './std.js';
 
 const RESOURCES = '/horizon/.local/horizon-client/26.3/';
 const PACK = new URL(globalThis.HORIZON_PACK || './pack/', import.meta.url);
@@ -23,11 +23,20 @@ console.error = (...args) => {
   }
   consoleError(...args);
 };
-// Shader compile errors from the page's WebGPU, with the offending line.
+// Horizon's shaders are written for the native compiler, which does not apply
+// WGSL's derivative-uniformity rule; the browser does. Every module gets the
+// standard switch that turns that rule off (the same behaviour as native).
+// Compile errors are kept, with the offending line, for debugging.
+const UNIFORMITY_OFF = 'diagnostic(off, derivative_uniformity);\n';
 const shaderErrors = [];
+const shaderSources = {};
 if (globalThis.GPUDevice) {
   const create = GPUDevice.prototype.createShaderModule;
   GPUDevice.prototype.createShaderModule = function (descriptor) {
+    if (typeof descriptor.code === 'string' && !descriptor.code.includes('derivative_uniformity')) {
+      descriptor = { ...descriptor, code: UNIFORMITY_OFF + descriptor.code };
+    }
+    shaderSources[descriptor.label ?? ''] = descriptor.code;
     const module = create.call(this, descriptor);
     module.getCompilationInfo?.().then((info) => {
       for (const m of info.messages) {
@@ -39,9 +48,84 @@ if (globalThis.GPUDevice) {
     return module;
   };
 }
+// `horizon.snapshot()`: the game's picture as a PNG data URL (tests; headless
+// screenshots and canvas copies miss WebGPU canvases). The frame's texture is
+// copied out through WebGPU itself, just after the game submits it.
+let snapshotWaiting = null;
+const snapshotDebug = [];
+let frameTexture = null;
+if (globalThis.GPUCanvasContext) {
+  const configure = GPUCanvasContext.prototype.configure;
+  GPUCanvasContext.prototype.configure = function (config) {
+    return configure.call(this, { ...config, usage: (config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) | GPUTextureUsage.COPY_SRC });
+  };
+  const current = GPUCanvasContext.prototype.getCurrentTexture;
+  GPUCanvasContext.prototype.getCurrentTexture = function () {
+    frameTexture = current.call(this);
+    return frameTexture;
+  };
+}
+async function copyFrame(device, texture) {
+  const { width, height, format } = texture;
+  const row = Math.ceil((width * 4) / 256) * 256;
+  const buffer = device.createBuffer({ size: row * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  snapshotDebug.push(`copy ${width}x${height} ${format} usage ${texture.usage}`);
+  device.pushErrorScope('validation');
+  const encoder = device.createCommandEncoder();
+  encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow: row }, { width, height });
+  device.queue.submit([encoder.finish()]);
+  device.popErrorScope().then((e) => snapshotDebug.push(`scope: ${e?.message ?? 'ok'}`));
+  await buffer.mapAsync(GPUMapMode.READ);
+  snapshotDebug.push('mapped');
+  const src = new Uint8Array(buffer.getMappedRange());
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const bgra = format.startsWith('bgra');
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * row + x * 4, o = (y * width + x) * 4;
+      pixels[o] = src[i + (bgra ? 2 : 0)];
+      pixels[o + 1] = src[i + 1];
+      pixels[o + 2] = src[i + (bgra ? 0 : 2)];
+      pixels[o + 3] = 255;
+    }
+  }
+  buffer.unmap();
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  canvas.getContext('2d').putImageData(new ImageData(pixels, width, height), 0, 0);
+  return canvas.toDataURL('image/png');
+}
+let gameDevice = null;
+if (globalThis.GPUQueue) {
+  const submit = GPUQueue.prototype.submit;
+  GPUQueue.prototype.submit = function (buffers) {
+    const out = submit.call(this, buffers);
+    if (snapshotWaiting && !snapshotWaiting.queued && frameTexture && gameDevice) {
+      snapshotWaiting.queued = true;
+      const texture = frameTexture;
+      queueMicrotask(() => {
+        const { resolve } = snapshotWaiting;
+        snapshotWaiting = null;
+        copyFrame(gameDevice, texture).then(resolve, (e) => resolve(String(e)));
+      });
+    }
+    return out;
+  };
+  const createEncoder = GPUDevice.prototype.createCommandEncoder;
+  GPUDevice.prototype.createCommandEncoder = function (d) {
+    gameDevice = this;
+    return createEncoder.call(this, d);
+  };
+}
 globalThis.horizon = {
+  snapshotState: () => ({ texture: !!frameTexture, device: !!gameDevice, waiting: !!snapshotWaiting, snapshotDebug }),
+  snapshot() {
+    return new Promise((resolve) => { snapshotWaiting = { resolve, queued: false }; });
+  },
   errors,
   shaderErrors,
+  shaderSources,
+  lines,
   fail(message) {
     screen.hidden = false;
     screen.classList.add('failed');
@@ -163,7 +247,11 @@ async function main() {
   }
   await loadResources();
   status.textContent = 'Starting Horizon';
-  state.args = (globalThis.HORIZON_ARGS || []).slice();
+  // The page's defaults: a modest view distance (the game's memory is capped at 2 GiB).
+  // `?args=--world T --creative` (tests) replaces the defaults.
+  const urlArgs = new URLSearchParams(location.search).get('args');
+  state.args = urlArgs ? urlArgs.split(' ').filter(Boolean)
+    : (globalThis.HORIZON_ARGS || ['--render-distance', '6']).slice();
   const wasm = await init({ module_or_path: new URL('horizon_bg.wasm', import.meta.url) });
   state.memory = wasm.memory;
   // The loading screen gives way once the game's canvas is on the page.
