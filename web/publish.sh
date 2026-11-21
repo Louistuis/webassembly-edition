@@ -29,13 +29,14 @@ mkdir -p "$STAGE/page" "$STAGE/files"
 cp -R web/page/. "$STAGE/page/"
 cp web/dist/horizon.js "$STAGE/page/"
 gzip -9 -c web/dist/horizon_bg.wasm > "$STAGE/page/horizon_bg.wasm.gz"
-cp "$RAID"/pack/core-*.bin "$STAGE/files/"
-# Sounds are not published yet (no audio in the browser build); the index
-# keeps their entries so the game still sees the files exist.
+# The sound chunks too: the page fetches them when a sound first plays. Hard
+# links where the stage shares the pack's disk (they are 380 MB).
+for chunk in "$RAID"/pack/core-*.bin "$RAID"/pack/sound-*.bin; do
+  ln "$chunk" "$STAGE/files/" 2>/dev/null || cp "$chunk" "$STAGE/files/"
+done
 python3 - "$RAID/pack/index.json" "$STAGE/files/index.json" <<'PY'
 import json, sys
 index = json.load(open(sys.argv[1]))
-index["chunks"]["sound"] = []
 index["wasm"] = "horizon_bg.wasm.gz"
 json.dump(index, open(sys.argv[2], "w"), separators=(",", ":"))
 PY

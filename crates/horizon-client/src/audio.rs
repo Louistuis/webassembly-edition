@@ -19,6 +19,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(target_arch = "wasm32")]
+mod web;
+
 /// An OpenAL source's state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -66,6 +69,7 @@ pub struct MixerBackend {
     root: PathBuf,
     cache: Arc<Mutex<SoundCache>>,
     /// The decoder thread for static sounds, started with the first one.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     decoder: Option<std::sync::mpsc::Sender<Decode>>,
     next: ChannelId,
     live: bool,
@@ -116,6 +120,7 @@ impl SoundCache {
     }
 }
 /// A static sound to decode for a channel waiting on it.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct Decode {
     key: String,
     file: PathBuf,
@@ -140,8 +145,11 @@ fn attach(mixer: &Mutex<Mixer>, channel: ChannelId, samples: Samples, looping: b
 /// need libasound) never has one.
 #[cfg(feature = "audio")]
 type Stream = cpal::Stream;
-#[cfg(not(feature = "audio"))]
+#[cfg(all(not(feature = "audio"), not(target_arch = "wasm32")))]
 type Stream = std::convert::Infallible;
+/// The browser build's output is the page's (`web`).
+#[cfg(all(not(feature = "audio"), target_arch = "wasm32"))]
+type Stream = web::Stream;
 pub struct Audio {
     _stream: Option<Stream>,
     pub engine: SoundEngine,
@@ -165,47 +173,79 @@ pub struct Audio {
     /// any), with or without an audio device, as `heard`.
     pub stopped: std::collections::BTreeMap<String, u32>,
 }
-fn decode(path: &Path) -> Option<(Vec<f32>, u32)> {
-    use symphonia::core::{
-        audio::SampleBuffer, codecs::DecoderOptions, formats::FormatOptions, io::MediaSourceStream,
-        meta::MetadataOptions, probe::Hint,
-    };
-    let file = fs::File::open(path).ok()?;
-    let stream = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    hint.with_extension("ogg");
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            stream,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .ok()?;
-    let mut format = probed.format;
-    let track = format.default_track()?;
-    let id = track.id;
-    let rate = track.codec_params.sample_rate?;
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .ok()?;
-    let mut mono = Vec::new();
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() != id {
-            continue;
-        }
-        let Ok(buffer) = decoder.decode(&packet) else {
-            continue;
+/// An Ogg/Vorbis file on its way to mono samples: decoded whole on a worker
+/// thread, or a few packets at a time where there is none (the browser
+/// build, `web`).
+struct Decoding {
+    format: Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    track: u32,
+    rate: u32,
+    mono: Vec<f32>,
+}
+impl Decoding {
+    fn open(path: &Path) -> Option<Self> {
+        use symphonia::core::{
+            codecs::DecoderOptions, formats::FormatOptions, io::MediaSourceStream,
+            meta::MetadataOptions, probe::Hint,
         };
-        let spec = *buffer.spec();
-        let channels = spec.channels.count().max(1);
-        let mut samples = SampleBuffer::<f32>::new(buffer.capacity() as u64, spec);
-        samples.copy_interleaved_ref(buffer);
-        for frame in samples.samples().chunks(channels) {
-            mono.push(frame.iter().sum::<f32>() / channels as f32);
+        let file = fs::File::open(path).ok()?;
+        let stream = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("ogg");
+        let probed = symphonia::default::get_probe()
+            .format(
+                &hint,
+                stream,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
+            .ok()?;
+        let format = probed.format;
+        let track = format.default_track()?;
+        let id = track.id;
+        let rate = track.codec_params.sample_rate?;
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .ok()?;
+        Some(Self {
+            format,
+            decoder,
+            track: id,
+            rate,
+            mono: Vec::new(),
+        })
+    }
+    /// Decode packets while `more` allows; whether the file is done.
+    fn step(&mut self, mut more: impl FnMut() -> bool) -> bool {
+        use symphonia::core::audio::SampleBuffer;
+        loop {
+            let Ok(packet) = self.format.next_packet() else {
+                return true;
+            };
+            if packet.track_id() == self.track
+                && let Ok(buffer) = self.decoder.decode(&packet)
+            {
+                let spec = *buffer.spec();
+                let channels = spec.channels.count().max(1);
+                let mut samples = SampleBuffer::<f32>::new(buffer.capacity() as u64, spec);
+                samples.copy_interleaved_ref(buffer);
+                for frame in samples.samples().chunks(channels) {
+                    self.mono.push(frame.iter().sum::<f32>() / channels as f32);
+                }
+            }
+            if !more() {
+                return false;
+            }
         }
     }
-    Some((mono, rate))
+}
+// The browser build decodes in steps (`web`).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn decode(path: &Path) -> Option<(Vec<f32>, u32)> {
+    let mut decoding = Decoding::open(path)?;
+    decoding.step(|| true);
+    Some((decoding.mono, decoding.rate))
 }
 impl MixerBackend {
     fn with(&self, channel: ChannelId, f: impl FnOnce(&mut Channel)) {
@@ -269,44 +309,53 @@ impl Backend for MixerBackend {
         }
         let (namespace, path) = sound.path();
         let file = self.root.join("assets").join(namespace).join(&path);
-        if sound.stream {
-            // A streamed sound loops by restarting its stream.
-            let mixer = self.mixer.clone();
-            std::thread::spawn(move || {
-                let samples = decode(&file).map(|(s, r)| (Arc::new(s), r));
-                attach(&mixer, channel, samples, looping);
+        // One thread in the browser: `web` decodes between frames.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let key = (!sound.stream).then(|| format!("{namespace}:{path}"));
+            web::queue(&self.cache, key, file, channel, looping && sound.stream);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if sound.stream {
+                // A streamed sound loops by restarting its stream.
+                let mixer = self.mixer.clone();
+                std::thread::spawn(move || {
+                    let samples = decode(&file).map(|(s, r)| (Arc::new(s), r));
+                    attach(&mixer, channel, samples, looping);
+                });
+                return;
+            }
+            let key = format!("{namespace}:{path}");
+            let cached = self.cache.lock().ok().and_then(|mut c| c.get(&key));
+            if let Some(samples) = cached {
+                attach(&self.mixer, channel, samples, false);
+                return;
+            }
+            let decoder = self.decoder.get_or_insert_with(|| {
+                let (send, receive) = std::sync::mpsc::channel::<Decode>();
+                let (mixer, cache) = (self.mixer.clone(), self.cache.clone());
+                std::thread::Builder::new()
+                    .name("sound decoder".into())
+                    .spawn(move || {
+                        for job in receive {
+                            // Queued twice before the first decode finished.
+                            let cached = cache.lock().ok().and_then(|mut c| c.get(&job.key));
+                            let samples = cached.unwrap_or_else(|| {
+                                let samples = decode(&job.file).map(|(s, r)| (Arc::new(s), r));
+                                if let Ok(mut c) = cache.lock() {
+                                    c.insert(job.key, samples.clone());
+                                }
+                                samples
+                            });
+                            attach(&mixer, job.channel, samples, false);
+                        }
+                    })
+                    .expect("sound decoder thread");
+                send
             });
-            return;
+            let _ = decoder.send(Decode { key, file, channel });
         }
-        let key = format!("{namespace}:{path}");
-        let cached = self.cache.lock().ok().and_then(|mut c| c.get(&key));
-        if let Some(samples) = cached {
-            attach(&self.mixer, channel, samples, false);
-            return;
-        }
-        let decoder = self.decoder.get_or_insert_with(|| {
-            let (send, receive) = std::sync::mpsc::channel::<Decode>();
-            let (mixer, cache) = (self.mixer.clone(), self.cache.clone());
-            std::thread::Builder::new()
-                .name("sound decoder".into())
-                .spawn(move || {
-                    for job in receive {
-                        // Queued twice before the first decode finished.
-                        let cached = cache.lock().ok().and_then(|mut c| c.get(&job.key));
-                        let samples = cached.unwrap_or_else(|| {
-                            let samples = decode(&job.file).map(|(s, r)| (Arc::new(s), r));
-                            if let Ok(mut c) = cache.lock() {
-                                c.insert(job.key, samples.clone());
-                            }
-                            samples
-                        });
-                        attach(&mixer, job.channel, samples, false);
-                    }
-                })
-                .expect("sound decoder thread");
-            send
-        });
-        let _ = decoder.send(Decode { key, file, channel });
     }
     /// `alSourceStop`: any state becomes stopped, an initial source too (a
     /// sound still decoding then never starts).
@@ -373,8 +422,11 @@ fn distance_gain(linear: Option<f32>, distance: f32) -> f32 {
         Some(_) => 0.0,
     }
 }
-// Only the output stream mixes; a build without one (no `audio` feature) never does.
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+// Only the output stream mixes; a build without one (no `audio` feature, off the browser) never does.
+#[cfg_attr(
+    all(not(feature = "audio"), not(target_arch = "wasm32")),
+    allow(dead_code)
+)]
 fn mix(mixer: &mut Mixer, data: &mut [f32], channels: usize, rate: u32) {
     data.fill(0.0);
     let listener = mixer.listener;
@@ -601,7 +653,11 @@ impl Audio {
             stopped: Default::default(),
         }
     }
-    #[cfg(not(feature = "audio"))]
+    #[cfg(all(not(feature = "audio"), target_arch = "wasm32"))]
+    fn open(mixer: Arc<Mutex<Mixer>>) -> Result<Stream> {
+        web::open(mixer)
+    }
+    #[cfg(all(not(feature = "audio"), not(target_arch = "wasm32")))]
     fn open(_: Arc<Mutex<Mixer>>) -> Result<Stream> {
         Err("this build has no sound output (built without the `audio` feature)".into())
     }

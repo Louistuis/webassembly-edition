@@ -11,6 +11,7 @@ It runs the same code as the native client; the differences below are all behind
 | Piece | Where |
 |---|---|
 | Start screen, boot, browser storage | `web/page/` (`index.html`, `start.css`, `boot.js`, `store.js`) |
+| Sound output | `web/page/audio.js` (the game's side: `crates/horizon-client/src/audio/web.rs`) |
 | The edition's own pages: settings, mods and packs, worlds, credits | `web/page/edition.js` (`wasmEdition.open(tab, inWorld)`), opened from the game's title screen and options (`crates/horizon-client/src/web_edition.rs`) |
 | Logo | `web/page/logo.png`, rendered by `web/brand/logo.py` (only the word "websim" is Comic Sans; the rest is pixel lettering) |
 | std for the page: clock, console, files, arguments | `web/std/` (`apply.py` patches the toolchain's library sources, `sys/*.rs` replace four platform modules), `web/page/std.js` (the page's side) |
@@ -62,13 +63,24 @@ It runs the same code as the native client; the differences below are all behind
   the page and back.
 - **Menus** show what works in a tab: the title screen has WASM Edition... and Credits where Realms and
   Quit Game are, no Friends (no relay); Multiplayer lists only the room's worlds; Options has WASM Edition
-  Settings (graphics, shader packs, mods, extras, controller, and the page's own pages), sound greyed out,
+  Settings (graphics, shader packs, mods, extras, controller, and the page's own pages),
   and "open folder" buttons open the page's upload panel instead.
 - **Mods and packs** (beta): files the player adds through the panel land in `horizon-mods/`,
   `resourcepacks/` and `shaderpacks/` and apply on the next start. Content mods load (their resource
   overlay is built from hard links, which the page's file system supports); mods with code don't run (no
   wasmtime in a tab). Horizon's own shader packs compile to WGSL through naga like on desktop.
-- **No sound yet.**
+- **Sound** (`crates/horizon-client/src/audio/web.rs`, `web/page/audio.js`). The game mixes as on desktop;
+  the page is the speaker: a timer asks `horizon_audio_mix` for the next samples about 70 ms ahead of the
+  clock and schedules them on an AudioContext (the lead grows a step when a long frame ran the output
+  dry). With one thread nothing decodes in the background, so sounds wait in a queue worked through a few
+  milliseconds at a time: short sounds here (most within the call that plays them), music and records by
+  the browser's own decoder, off the thread, straight from the page's copy of the file. A browser opens
+  sound only after a click or a key, and a hidden tab is silent.
+- **Sound files** are 380 MB, so nobody waits for them: `web/pack.py` packs them in small chunks, a sound
+  folder at a time, and every music track and record alone. A chunk is fetched when the game first asks
+  for a file in it (that short sound is skipped; music starts once its chunk is here), and a few seconds
+  into the game the page fetches the small sounds quietly, the ones heard most first. Music only comes
+  when it plays. `web/test/sound.mjs` plays a sound and a record and reads what the output did.
 - The title screen shows the game's logo, then "websim" (WebSim only) beside the pixel "WASM EDITION"
   banner, our own splashes, and "Minecraft WebSim WASM Edition 26.3" in the corner.
 

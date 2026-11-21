@@ -27,6 +27,7 @@ game does, in survival or creative, with mobs, redstone, crafting, the inventory
 know. It is the Horizon client (a Rust rewrite of the game) compiled to `wasm32` and taught to live in a page:
 
 - **Instant play.** Open the page, press Play. Worlds are kept in your browser.
+- **Sound.** Effects, ambience, music and records, fetched as they are needed so nobody waits for them.
 - **Multiplayer through WebSim.** Open your world to LAN from the pause menu and everyone on the WebSim page
   sees it in their Multiplayer list. The host checks guests the way a server does: reach, flying, speed,
   chat spam, packet floods, and names pinned to WebSim accounts.
@@ -40,7 +41,7 @@ only answers with an access key. The page is invite only for that reason.
 
 ## Not there yet
 
-No sound. Mods with code (only content mods load). Far terrain. Joining real servers (a browser tab opens no
+Mods with code (only content mods load). Far terrain. Joining real servers (a browser tab opens no
 sockets: multiplayer is the WebSim room). The full list is in [ROADMAP.md](ROADMAP.md).
 
 ## How it works

@@ -4,6 +4,7 @@
 import init, { horizon_start } from './horizon.js';
 import * as game from './horizon.js';
 import { startNet } from './net.js';
+import { startAudio } from './audio.js';
 import { state, lines, useExports, counters } from './std.js';
 import { RESOURCES, KEPT, session, isBlocked, openStore, readAll, tx } from './store.js';
 // The game files: beside the page in tests, or on the locked file host that
@@ -225,14 +226,65 @@ async function loadResources(index) {
     status.textContent = `Loading game files: ${(done / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB`;
   };
   const chunks = await Promise.all(core.map((c) => fetchChunk(c, progress)));
-  const sounds = new Map();
+  const sounds = soundChunks(index.chunks.sound || []);
   for (const [rel, [group, chunk, offset, length]] of Object.entries(index.files)) {
-    const loader = group === 'core'
-      ? () => chunks[chunk].subarray(offset, offset + length)
-      : () => sounds.get(chunk)?.subarray(offset, offset + length);
+    let loader;
+    if (group === 'core') loader = () => chunks[chunk].subarray(offset, offset + length);
+    else {
+      // `peek` and `done` are for audio.js, which decodes music without the
+      // game taking a copy of the file.
+      const peek = () => sounds.bytes(chunk)?.subarray(offset, offset + length);
+      loader = Object.assign(() => peek(), { peek, done: () => sounds.done(chunk) });
+    }
     state.files.set(RESOURCES + rel, Object.assign(loader, { size: length }));
   }
   return { index, sounds };
+}
+
+// ---- sound files ----
+// Nobody waits for 380 MB of sound before playing. A sound's chunk is fetched
+// when the game first asks for a file in it (that first sound is skipped, or,
+// for music, starts once the chunk is here); after a moment the small sounds
+// are fetched quietly too, the ones heard most first. Music tracks and records
+// are a chunk each and only come when they play.
+const SOUNDS_FIRST = ['ui', 'dig', 'step', 'random', 'damage', 'liquid', 'fire', 'item', 'entity', 'block', 'mob', 'ambient'];
+const ALONE = new Set(['music', 'records']);
+
+function soundChunks(list) {
+  const have = new Map(); // chunk number -> its bytes
+  const asked = new Map(); // chunk number -> the fetch
+  const want = (n) => {
+    if (have.has(n) || !list[n]) return Promise.resolve();
+    if (!asked.has(n)) {
+      asked.set(n, fetchChunk(list[n]).then((bytes) => { have.set(n, bytes); }, (e) => {
+        console.warn(`Horizon: could not get sounds (${list[n].name})`, e);
+        // Asked for again later, not at once.
+        setTimeout(() => asked.delete(n), 10000);
+      }));
+    }
+    return asked.get(n);
+  };
+  return {
+    // A chunk's bytes if they are here; asks for them otherwise.
+    bytes(n) {
+      const bytes = have.get(n);
+      if (!bytes) want(n);
+      return bytes;
+    },
+    // A track was decoded: its chunk can go (it is fetched again if it plays again).
+    done(n) {
+      if (!ALONE.has(list[n]?.dir)) return;
+      have.delete(n);
+      asked.delete(n);
+    },
+    // Everything but music, one chunk at a time.
+    async prefetch() {
+      if (navigator.connection?.saveData) return;
+      const rank = (c) => { const i = SOUNDS_FIRST.indexOf(c.dir); return i < 0 ? SOUNDS_FIRST.length : i; };
+      const order = list.map((c, n) => [c, n]).filter(([c]) => !ALONE.has(c.dir)).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]);
+      for (const [, n] of order) await want(n);
+    },
+  };
 }
 
 // ---- the start screen ----
@@ -354,9 +406,9 @@ async function prepare() {
   } catch (e) {
     console.warn('Horizon: no browser storage, worlds will not be kept', e);
   }
-  await loadResources(index);
+  const { sounds } = await loadResources(index);
   status.textContent = 'Starting the game';
-  return module;
+  return { module, sounds };
 }
 
 async function main() {
@@ -373,7 +425,7 @@ async function main() {
   }
   try { sessionStorage.removeItem('wasmEdition.menu'); } catch { /* private window */ }
   screen.classList.add('playing');
-  const module = await ready;
+  const { module, sounds } = await ready;
   if (urlArgs !== null) {
     // Tests: `?args=--world T --creative` replaces the page's own arguments.
     state.args = urlArgs.split(' ').filter(Boolean);
@@ -395,6 +447,8 @@ async function main() {
   state.memory = wasm.memory;
   useExports(wasm);
   startNet(game, accessKey);
+  startAudio(game);
+  setTimeout(() => sounds.prefetch(), 8000);
   // Tests drive the game with its agent-control commands (docs/agent-control.md);
   // only test runs (`?args=`) get them, so nothing else on the page can.
   if (urlArgs !== null) {

@@ -1639,8 +1639,7 @@ impl OptionsUi {
                 let web = cfg!(target_arch = "wasm32");
                 let entries = [
                     ("options.skinCustomisation", None),
-                    // No sound in the browser build yet.
-                    ("options.sounds", (!web).then_some(Page::Sound)),
+                    ("options.sounds", Some(Page::Sound)),
                     ("options.video", Some(Page::Video)),
                     ("options.controls", Some(Page::Controls)),
                     ("options.language", Some(Page::Language)),
