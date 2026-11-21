@@ -1,123 +1,178 @@
-/* The start screen of Horizon Browser Edition. Colours, type and the block
-   buttons follow Horizon's own design tokens (crates/horizon-theme/tokens.css,
-   docs/design-system.md), dark palette. */
-@font-face { font-family: "Pixelify Sans"; src: url(./fonts/PixelifySans-SemiBold.ttf) format("truetype"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "Geist"; src: url(./fonts/Geist-Regular.ttf) format("truetype"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Geist"; src: url(./fonts/Geist-Medium.ttf) format("truetype"); font-weight: 500; font-display: swap; }
+/* The start screen of Minecraft WASM Edition, in the look of the game's own
+   menus: a soft blurred scene, a white pixel wordmark, a thin loading bar, and
+   game-style dialogs only when something is needed from the player.
+   edition.css (the in-game panel) shares these tokens and buttons.
+   All text is Pixelify Sans; Comic Sans (Comic Neue as the fallback) is only
+   the "websim" wordmark, and only if its image fails to load. */
+@font-face { font-family: "Pixelify Sans"; src: url(./fonts/PixelifySans-SemiBold.ttf) format("truetype"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Comic Neue"; src: url(./fonts/ComicNeue-Bold.ttf) format("truetype"); font-weight: 700; font-display: swap; }
 
 :root {
-  --page: #0f0d17;
-  --panel: #1a1727;
-  --ink: #ecedf3;
-  --ink-soft: #c5c7d1;
-  --muted: #9893ad;
-  --accent: #9a86ff;
-  --button: #2b2641;
-  --button-bevel: #3d3560;
-  --lip: #07060b;
-  --outline: #05040a;
-  --face: #5b3fd6;
-  --face-bevel: #8a74ff;
-  --face-lip: #3a2694;
-  --danger: #ff8a80;
-  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --pixel: "Pixelify Sans", "Geist", -apple-system, sans-serif;
+  --pixel: "Pixelify Sans", ui-monospace, monospace;
+  --comic: "Comic Sans MS", "Comic Sans", "Comic Neue", cursive;
+  --white: #ffffff;
+  --grey: #c6c6c6;      /* secondary text on dark */
+  --label: #a8a8a8;     /* field labels, hints */
+  --yellow: #ffff55;    /* the game's highlight yellow */
+  --red-text: #ff7b72;
+  --green-text: #7ee787;
+  --shadow: 2px 2px 0 #3f3f3f;
+  --soft-shadow: 2px 2px 0 #2a2a2a;
+  --band: rgba(0, 0, 0, .5);
+  --line: rgba(255, 255, 255, .28);
+  --ease: cubic-bezier(.2, .8, .2, 1);
   color-scheme: dark;
 }
 
-html, body { margin: 0; height: 100%; background: var(--page); overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #20242c; overflow: hidden; }
 body > canvas { position: fixed; inset: 0; width: 100vw !important; height: 100vh !important; display: block; outline: none; }
+[data-brand="plain"] .ws-only, [data-brand="websim"] .plain-only { display: none !important; }
 
+/* ---- the game-style button, used everywhere ---- */
+.btn {
+  appearance: none; cursor: pointer; position: relative; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 40px; padding: 6px 16px 8px; border: 2px solid #000; border-radius: 0;
+  background: #6f6f6f; color: var(--white);
+  font: 400 17px/1.15 var(--pixel); letter-spacing: .02em; text-shadow: var(--shadow); white-space: nowrap;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .38), inset -2px -3px 0 rgba(0, 0, 0, .42);
+  transition: background .1s ease, border-color .1s ease;
+  -webkit-tap-highlight-color: transparent; text-decoration: none;
+}
+.btn svg { width: 14px; height: 14px; fill: currentColor; shape-rendering: crispEdges; filter: drop-shadow(2px 2px 0 #3f3f3f); }
+.btn:hover { background: #7c7c7c; border-color: var(--white); }
+.btn:focus-visible { outline: none; border-color: var(--white); background: #7c7c7c; }
+.btn:active { background: #5e5e5e; box-shadow: inset -2px -2px 0 rgba(255, 255, 255, .2), inset 2px 3px 0 rgba(0, 0, 0, .42); }
+.btn:disabled, .btn[aria-disabled="true"] {
+  cursor: not-allowed; background: #2e2e2e; color: #a0a0a0; text-shadow: none; border-color: #000;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, .07), inset -2px -3px 0 rgba(0, 0, 0, .3);
+}
+
+/* ---- the game-style text field ---- */
+.mc-field {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px 10px;
+  border: 2px solid #a0a0a0; border-radius: 0; background: #000; color: var(--white);
+  font: 400 16px/1.2 var(--pixel); letter-spacing: .02em; caret-color: var(--white);
+}
+.mc-field::placeholder { color: #8a8a8a; }
+.mc-field:focus { outline: none; border-color: var(--white); }
+.mc-field:invalid { border-color: var(--red-text); }
+
+/* ---- the start screen ---- */
 #boot {
-  position: fixed; inset: 0; z-index: 2;
-  display: grid; place-items: center; padding: 16px;
-  background: linear-gradient(180deg, #1d1838 0%, #2c2452 46%, #5a3f7a 78%, #c07a6a 100%);
-  color: var(--ink); font: 400 15px/1.5 var(--font);
-  transition: opacity .35s ease;
+  position: fixed; inset: 0; z-index: 2; overflow: hidden;
+  color: var(--white); font: 400 16px/1.4 var(--pixel); -webkit-font-smoothing: antialiased;
+  transition: opacity .7s ease;
 }
 #boot.gone { opacity: 0; pointer-events: none; }
 #boot[hidden] { display: none; }
 
-/* Slow pixel clouds drifting behind the card. */
-.sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.sky i {
-  position: absolute; display: block; height: 16px; background: rgba(255, 255, 255, .07);
-  box-shadow: 16px -16px 0 rgba(255, 255, 255, .07), 48px -16px 0 rgba(255, 255, 255, .07);
-  animation: drift linear infinite;
+/* A blurred block world: sky, sun, clouds, hills, trees, grass, earth. */
+.scene { position: absolute; inset: 0; overflow: hidden; background: #8fb6ff; }
+.scene-layer {
+  position: absolute; inset: -8%; filter: blur(14px) saturate(1.15);
+  background: linear-gradient(180deg, #5f8ff0 0%, #86b0ff 30%, #c4dbff 52%, #dfe9f5 56%);
+  animation: pan 60s ease-in-out infinite alternate;
 }
-.sky i:nth-child(1) { top: 14%; width: 160px; animation-duration: 90s; animation-delay: -10s; }
-.sky i:nth-child(2) { top: 26%; width: 96px;  animation-duration: 120s; animation-delay: -70s; }
-.sky i:nth-child(3) { top: 38%; width: 224px; animation-duration: 140s; animation-delay: -30s; }
-.sky i:nth-child(4) { top: 58%; width: 128px; animation-duration: 110s; animation-delay: -90s; }
-.sky i:nth-child(5) { top: 70%; width: 192px; animation-duration: 160s; animation-delay: -50s; }
-.sky i:nth-child(6) { top: 84%; width: 112px; animation-duration: 100s; animation-delay: -20s; }
-@keyframes drift { from { transform: translateX(-260px); } to { transform: translateX(calc(100vw + 260px)); } }
+.scene-layer i { position: absolute; display: block; }
+.sun { left: 70%; top: 12%; width: 120px; height: 120px; background: #fff8d6; }
+.cloud { height: 34px; background: rgba(255, 255, 255, .92); }
+.c1 { left: 6%; top: 16%; width: 260px; } .c2 { left: 40%; top: 9%; width: 180px; } .c3 { left: 78%; top: 30%; width: 220px; }
+.hill { bottom: 36%; border-radius: 40% 40% 0 0; }
+.h1 { left: -6%; width: 50%; height: 22%; background: #4d7f3a; }
+.h2 { left: 32%; width: 44%; height: 16%; background: #5b8f43; }
+.h3 { left: 64%; width: 52%; height: 25%; background: #477636; }
+.tree { bottom: 34%; width: 70px; height: 70px; background: #2f6b2a; box-shadow: 0 60px 0 -22px #6b4a2b; }
+.t1 { left: 12%; } .t2 { left: 22%; width: 90px; height: 90px; } .t3 { left: 60%; } .t4 { left: 84%; width: 96px; height: 96px; }
+.ground { left: 0; right: 0; bottom: 0; height: 38%; background: linear-gradient(180deg, #6bb043 0 9%, #5a9a38 9% 22%, #866043 22% 60%, #6d4c34 60%); }
+.block { bottom: 30%; width: 64px; height: 64px; background: #8b6a4a; }
+.b1 { left: 30%; } .b2 { left: 34.5%; bottom: 36%; background: #7b7b7b; } .b3 { left: 72%; background: #9b7b55; }
+.water { left: 44%; bottom: 25%; width: 18%; height: 7%; background: #3f76e4; }
+/* Darker toward the edges and the bottom, so white text always reads. */
+.scene::after {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(120% 90% at 50% 40%, rgba(10, 12, 20, .18), rgba(10, 12, 20, .62)),
+    linear-gradient(180deg, rgba(0, 0, 0, .1), rgba(0, 0, 0, .35));
+}
+@keyframes pan { from { transform: translateX(-2%) scale(1.02); } to { transform: translateX(2%) scale(1.06); } }
 
-.card {
-  position: relative; width: min(420px, 100%); box-sizing: border-box;
-  padding: 28px 28px 22px; display: grid; gap: 18px;
-  background: var(--panel); border: 2px solid var(--outline);
-  box-shadow: inset 0 2px 0 var(--button-bevel), 0 4px 0 var(--lip), 0 24px 60px rgba(0, 0, 0, .45);
+.boot-center {
+  position: relative; z-index: 1; box-sizing: border-box; height: 100%; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  padding: 40px 16px 64px;
 }
-header { display: grid; gap: 2px; }
-.wordmark {
-  margin: 0; font: 600 clamp(36px, 11vw, 52px)/0.95 var(--pixel); letter-spacing: 0;
-  color: #fff; text-shadow: 0 4px 0 var(--face-lip);
-}
-.edition { margin: 0; font: 600 22px/1.2 var(--pixel); color: var(--accent); letter-spacing: .02em; }
-.credit { margin: 0; color: var(--ink-soft); }
-.credit b { color: var(--ink); font-weight: 500; }
+.boot-center > * { flex: none; }
 
-.who { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 14px; }
+.brand { display: grid; justify-items: center; gap: 6px; text-align: center; animation: appear .6s var(--ease) both; }
+.logo { margin: 0; display: grid; justify-items: center; font-weight: 400; filter: drop-shadow(0 4px 0 rgba(0, 0, 0, .3)); }
+.logo-img { display: block; width: min(360px, 82vw); height: auto; margin: -22px 0 -18px; }
+.logo-text { font: 700 72px/1 var(--comic); color: #4285F4; }
+.game-name, .edition-name {
+  color: var(--white); text-transform: uppercase; white-space: nowrap;
+  text-shadow: -3px -3px 0 #1b1b1b, 3px -3px 0 #1b1b1b, -3px 3px 0 #1b1b1b, 3px 3px 0 #1b1b1b,
+    0 -3px 0 #1b1b1b, 0 3px 0 #1b1b1b, -3px 0 0 #1b1b1b, 3px 0 0 #1b1b1b, 0 7px 0 #1b1b1b;
+}
+.game-name { font: 600 clamp(38px, 11vw, 64px)/1 var(--pixel); letter-spacing: .1em; margin-left: .1em; padding: 4px 0 10px; }
+.edition-name { font: 600 clamp(20px, 6vw, 30px)/1.1 var(--pixel); letter-spacing: .2em; margin-left: .2em; padding: 6px 0 10px; color: var(--yellow); }
+[data-brand="plain"] .edition-name { font-size: clamp(24px, 7vw, 36px); }
+.byline { margin: 0; color: var(--grey); font-size: 16px; text-shadow: var(--soft-shadow); }
+
+/* The thin loading bar. */
+.loading { display: none; width: min(420px, 100%); gap: 12px; justify-items: center; animation: appear .35s var(--ease) both; }
+.track { width: 100%; height: 10px; box-sizing: border-box; border: 2px solid var(--white); background: rgba(0, 0, 0, .35); box-shadow: 2px 2px 0 rgba(0, 0, 0, .45); }
+#boot-bar { width: 0; height: 100%; background: var(--white); transition: width .25s ease; }
+#boot-status { margin: 0; min-height: 1.4em; max-width: 100%; color: var(--white); text-align: center; text-shadow: var(--soft-shadow); overflow-wrap: anywhere; }
+
+/* Game-style dialogs: a title, a dark band between two light lines, buttons. */
+.mc-dialog {
+  width: min(440px, 100%); box-sizing: border-box; display: grid; gap: 14px; justify-items: stretch;
+  animation: dialog-in .22s var(--ease) both;
+}
+.mc-dialog[hidden] { display: none; }
+.mc-dialog h2 { margin: 0; text-align: center; font: 400 22px/1.2 var(--pixel); color: var(--white); text-shadow: var(--soft-shadow); }
+.mc-band {
+  display: grid; gap: 10px; padding: 16px; background: var(--band);
+  border-top: 2px solid var(--line); border-bottom: 2px solid var(--line);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.mc-band label, .mc-band small { color: var(--label); font-size: 15px; }
+.mc-band small { font-size: 13px; }
+.mc-band p { margin: 0; }
+.mc-dialog > .btn { width: 100%; }
+@keyframes dialog-in { from { opacity: 0; transform: scale(.96); } }
+@keyframes appear { from { opacity: 0; transform: translateY(8px); } }
+
+.who { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--grey); }
 .who[hidden] { display: none; }
-.who b { color: var(--ink); font-weight: 500; }
-.avatar { width: 28px; height: 28px; background: var(--button) center/cover no-repeat; border: 2px solid var(--outline); image-rendering: pixelated; }
+.who b { color: var(--white); font-weight: 400; }
+.avatar { width: 32px; height: 32px; flex: none; border: 2px solid #a0a0a0; background: #000 center/cover no-repeat; image-rendering: pixelated; }
+.name-field { display: grid; gap: 8px; }
+.play { min-height: 46px; font-size: 20px; }
 
-.start { display: grid; gap: 14px; }
-.block {
-  appearance: none; cursor: pointer; font: 600 20px/1 var(--pixel); letter-spacing: .02em;
-  padding: 14px 18px 16px; border: 2px solid var(--outline); color: #fff;
-  background: var(--face);
-  box-shadow: inset 0 2px 0 var(--face-bevel), inset 0 -4px 0 var(--face-lip);
-  transition: transform .08s ease, filter .12s ease;
+#fail-message { color: var(--white); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.45; max-height: 40vh; overflow: auto; }
+
+.legal {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding: 10px 16px 12px; text-align: center;
+  font-size: 14px; color: var(--white); text-shadow: var(--soft-shadow);
 }
-.block:hover { filter: brightness(1.08); }
-.block:active { transform: translateY(2px); box-shadow: inset 0 2px 0 var(--face-bevel), inset 0 -2px 0 var(--face-lip); }
-.block:focus-visible, .segments button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.block:disabled { cursor: default; filter: saturate(.4) brightness(.8); }
 
-.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.label { color: var(--muted); font-size: 13px; }
-.segments { display: flex; border: 2px solid var(--outline); background: var(--lip); }
-.segments button {
-  appearance: none; cursor: pointer; min-width: 42px; padding: 6px 0 7px; border: 0;
-  font: 500 14px/1 var(--font); color: var(--ink-soft); background: var(--button);
-  box-shadow: inset 0 2px 0 var(--button-bevel);
+/* ---- states ---- */
+/* The menu (no auto-start): the Play dialog; loading waits for Play. */
+#start { display: grid; }
+.fail { display: none; }
+.auto #boot #start, #boot.playing #start, #boot.locked #start, #boot.failed #start { display: none; }
+.auto #boot .loading, #boot.playing .loading { display: grid; }
+#boot.locked .loading, #boot.failed .loading { display: none; }
+#boot.failed .mc-dialog.key { display: none; }
+#boot.failed .fail { display: grid; }
+/* The plain brand's Play dialog has its title; on WebSim the band holds "Playing as". */
+[data-brand="websim"] #start .mc-band:not(:has(.who:not([hidden]))) { display: none; }
+
+@media (max-width: 420px) {
+  .boot-center { gap: 22px; padding-top: 28px; }
+  .mc-band { padding: 14px 12px; }
 }
-.segments button + button { border-left: 2px solid var(--outline); }
-.segments button[aria-checked="true"] { color: #fff; background: var(--face); box-shadow: inset 0 2px 0 var(--face-bevel); }
-
-.loading { display: none; gap: 10px; }
-#boot.playing .start { display: none; }
-#boot.playing .loading, #boot.failed .loading { display: grid; }
-.track { height: 12px; border: 2px solid var(--outline); background: var(--lip); }
-#boot-bar { width: 0; height: 100%; background: var(--face); box-shadow: inset 0 2px 0 var(--face-bevel); transition: width .2s ease; }
-#boot-status { margin: 0; min-height: 1.5em; color: var(--ink-soft); font-size: 14px; overflow-wrap: anywhere; }
-#boot.failed #boot-status { color: var(--danger); white-space: pre-wrap; }
-#boot.failed .start { display: none; }
-
-.key { display: grid; gap: 8px; }
-.key[hidden] { display: none; }
-.key label { color: var(--ink-soft); font-size: 14px; }
-.key-row { display: flex; gap: 8px; }
-.key input {
-  flex: 1; min-width: 0; padding: 10px 12px; border: 2px solid var(--outline); background: var(--lip);
-  color: var(--ink); font: 400 14px/1 var(--font);
+@media (prefers-reduced-motion: reduce) {
+  .scene-layer, .brand, .loading, .mc-dialog { animation: none; }
+  #boot, .btn, #boot-bar { transition: none; }
 }
-.key input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
-.block.small { font-size: 16px; padding: 10px 14px 12px; }
-#boot.locked .start { display: none; }
-footer .oss { display: block; margin-top: 6px; }
-footer { color: var(--muted); font-size: 12px; line-height: 1.5; border-top: 2px solid var(--outline); padding-top: 14px; }
-
-@media (prefers-reduced-motion: reduce) { .sky i { animation: none; } .block, #boot { transition: none; } }

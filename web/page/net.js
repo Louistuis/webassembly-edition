@@ -73,6 +73,7 @@ async function websimRoom() {
     send: (message) => socket.send(message),
     onMessage: (f) => listeners.push(f),
     setPresence: (presence) => socket.updatePresence(presence),
+    count: () => Object.keys(socket.peers || {}).length,
     members() {
       return Object.entries(socket.presence || {}).map(([id, presence]) => ({
         id, presence, name: socket.peers?.[id]?.username,
@@ -103,6 +104,7 @@ function localRoom() {
     onMessage: (f) => listeners.push(f),
     setPresence(presence) { mine = presence; announce(); },
     members: () => [...presences].map(([peer, presence]) => ({ id: peer, presence })),
+    count: () => presences.size + 1,
   };
 }
 
@@ -152,6 +154,10 @@ globalThis.horizonNet = {
   hosting(motd) {
     hostingMotd = motd;
     room?.setPresence(motd ? { hz: { motd } } : {});
+  },
+  // How many people are in the room, this page included (the edition panel shows it).
+  people() {
+    try { return room?.count?.() ?? 0; } catch { return 0; }
   },
   games() {
     if (!room) return '';

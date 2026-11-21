@@ -54,6 +54,12 @@ It runs the same code as the native client; the differences below are all behind
   1 block a tick (20% more per Speed level) with 60 blocks saved up, or is sent back.
   `web/test/cheats.mjs` flies, dashes and spams as a cheating guest would. Room messages still reach
   every member, so what players send each other is not private from others in the room.
+- **The page looks like the game's menus** and gets out of the way: it starts the game by itself once
+  the access key is stored and the player has a name (the WebSim user, or a saved name elsewhere), over a
+  blurred backdrop of its own with a loading bar; the key, the name, Play (after Quit Game or `?menu=1`)
+  and errors are game-style dialogs. The edition's pages open only from the game, blurred over it.
+  `web/test/edition.mjs` shoots every state of both brands, `web/test/menu.mjs` clicks from the game into
+  the page and back.
 - **Menus** show what works in a tab: the title screen has WASM Edition... and Credits where Realms and
   Quit Game are, no Friends (no relay); Multiplayer lists only the room's worlds; Options has WASM Edition
   Settings (graphics, shader packs, mods, extras, controller, and the page's own pages), sound greyed out,

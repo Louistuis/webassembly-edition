@@ -3,59 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebAssembly Edition</title>
+<title>Minecraft WASM Edition</title>
 <script>Error.stackTraceLimit = 200;</script>
+<script>
+// Branding, decided before anything else runs (the game reads wasmEdition.websim
+// at startup): the WebSim page, or plain "WASM Edition" everywhere else.
+// Tests force one with ?brand=plain or ?brand=websim.
+(() => {
+  const forced = new URLSearchParams(location.search).get('brand');
+  const onWebSim = forced ? forced === 'websim'
+    : /(^|\.)websim\.(com|ai)$/.test(location.hostname) || !!globalThis.websim;
+  // edition.js (which loads before boot.js) replaces open/close/isOpen with the real panel.
+  globalThis.wasmEdition = Object.assign(globalThis.wasmEdition || {}, {
+    websim: onWebSim,
+    isWebSim: () => onWebSim,
+    open() {}, close() {}, isOpen: () => false,
+    // The game's Quit Game: back to the start card, without starting again on its own.
+    quit() {
+      try {
+        sessionStorage.setItem('wasmEdition.menu', '1');
+        location.reload();
+      } catch {
+        const url = new URL(location.href);
+        url.searchParams.set('menu', '1');
+        location.replace(url);
+      }
+    },
+  });
+  document.documentElement.dataset.brand = onWebSim ? 'websim' : 'plain';
+  document.title = onWebSim ? 'Minecraft WebSim WASM Edition' : 'Minecraft WASM Edition';
+})();
+</script>
 <script type="importmap">{ "imports": { "horizon_std": "./std.js" } }</script>
+<link rel="preload" href="./fonts/PixelifySans-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="./start.css">
+<link rel="stylesheet" href="./edition.css">
 </head>
 <body>
+<script>
+// Straight into the game when nothing is needed from the player: the key is
+// stored (or the page is not locked) and a name is known. The start card is
+// then only a loading splash. The full card shows with ?menu=1, after Quit
+// Game, or when a key or a name is needed (boot.js has the last word).
+(() => {
+  const get = (store, key) => { try { return store.getItem(key); } catch { return null; } };
+  const query = new URLSearchParams(location.search);
+  const keyOk = !globalThis.HORIZON_FILES || Boolean(get(localStorage, 'horizon.key'));
+  const nameOk = wasmEdition.websim || /^[A-Za-z0-9_]{3,16}$/.test(get(localStorage, 'horizon.name') || '');
+  wasmEdition.autoStart = keyOk && nameOk && query.get('menu') !== '1' && get(sessionStorage, 'wasmEdition.menu') !== '1';
+  if (wasmEdition.autoStart) document.documentElement.classList.add('auto');
+})();
+</script>
 <main id="boot" aria-live="polite">
-  <div class="sky" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-  <section class="card">
-    <header>
-      <h1 class="wordmark">WebAssembly</h1>
-      <p class="edition">Edition</p>
+  <!-- A soft, blurred block-world scene drawn in CSS (no game art). -->
+  <div class="scene" aria-hidden="true">
+    <div class="scene-layer">
+      <i class="sun"></i><i class="cloud c1"></i><i class="cloud c2"></i><i class="cloud c3"></i>
+      <i class="hill h1"></i><i class="hill h2"></i><i class="hill h3"></i>
+      <i class="tree t1"></i><i class="tree t2"></i><i class="tree t3"></i><i class="tree t4"></i>
+      <i class="ground"></i><i class="block b1"></i><i class="block b2"></i><i class="block b3"></i><i class="water"></i>
+    </div>
+  </div>
+
+  <div class="boot-center">
+    <header class="brand">
+      <h1 class="logo">
+        <span class="game-name">Minecraft</span>
+        <span id="logo-slot" hidden></span>
+        <script>
+          // The "websim" wordmark, on the WebSim page only (Comic Sans if the image fails).
+          (() => {
+            const slot = document.getElementById('logo-slot');
+            if (!wasmEdition.websim) { slot.remove(); return; }
+            const img = Object.assign(new Image(1024, 256), { alt: 'websim', className: 'logo-img' });
+            img.onerror = () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'logo-text', textContent: 'websim' }));
+            img.src = './logo.png';
+            slot.replaceWith(img);
+          })();
+        </script>
+        <span class="edition-name">WASM Edition</span>
+      </h1>
+      <p class="byline">by Louis</p>
     </header>
-    <p class="credit">The full block game in your browser. Brought to you by <b>Louis</b>.</p>
 
-    <div class="who" id="who" hidden>
-      <span class="avatar" id="who-avatar" aria-hidden="true"></span>
-      <span>Playing as <b id="who-name"></b></span>
-    </div>
-
-    <form class="key" id="key" hidden>
-      <label for="key-input">This copy is invite only. Paste your access key.</label>
-      <div class="key-row">
-        <input id="key-input" autocomplete="off" spellcheck="false" placeholder="Access key">
-        <button class="block small" type="submit">Unlock</button>
-      </div>
-    </form>
-
-    <div class="start" id="start">
-      <button class="block face" id="play" type="button">Play</button>
-      <div class="setting" role="radiogroup" aria-label="View distance">
-        <span class="label">View distance</span>
-        <div class="segments" id="distance">
-          <button type="button" data-v="4">4</button>
-          <button type="button" data-v="6">6</button>
-          <button type="button" data-v="8">8</button>
-          <button type="button" data-v="10">10</button>
-        </div>
-      </div>
-    </div>
-
+    <!-- Loading: a thin bar and one line. -->
     <div class="loading" id="loading">
       <div class="track"><div id="boot-bar"></div></div>
       <p id="boot-status">Getting the game files ready</p>
     </div>
 
-    <footer>
-      A complete game client compiled to WebAssembly, rendering with WebGPU.
-      Worlds are kept in this browser. Works best in a current Chrome, Edge or Safari.
-      <span class="oss">Client: open-source Horizon (MIT).</span>
-    </footer>
-  </section>
+    <!-- Asked only when needed: the access key. -->
+    <form class="mc-dialog key" id="key" hidden>
+      <h2>Access key</h2>
+      <div class="mc-band">
+        <label for="key-input">This copy is invite only. Paste the key you were given.</label>
+        <input class="mc-field" id="key-input" autocomplete="off" spellcheck="false" placeholder="Access key">
+      </div>
+      <button class="btn" type="submit">Unlock</button>
+    </form>
+
+    <!-- Play: after Quit Game, with ?menu=1, or when a name is needed. -->
+    <section class="mc-dialog start" id="start" aria-labelledby="start-title">
+      <h2 id="start-title" class="plain-only">Player name</h2>
+      <div class="mc-band">
+        <div class="who" id="who" hidden>
+          <span class="avatar" id="who-avatar" aria-hidden="true"></span>
+          <span>Playing as <b id="who-name"></b></span>
+        </div>
+        <div class="name-field plain-only" id="name-field">
+          <label for="name-input">Your name in the game</label>
+          <input class="mc-field" id="name-input" autocomplete="nickname" spellcheck="false" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" aria-describedby="name-hint">
+          <small id="name-hint">3 to 16 letters, digits or _</small>
+        </div>
+      </div>
+      <button class="btn play" id="play" type="button">Play</button>
+    </section>
+
+    <!-- The error screen. -->
+    <section class="mc-dialog fail" id="fail" aria-labelledby="fail-title">
+      <h2 id="fail-title">Something went wrong</h2>
+      <div class="mc-band"><p id="fail-message"></p></div>
+      <button class="btn" id="fail-retry" type="button">Try again</button>
+    </section>
+  </div>
+
+  <footer class="legal">
+    <span class="ws-only">Not affiliated with Mojang, Microsoft or WebSim.</span>
+    <span class="plain-only">Not affiliated with Mojang or Microsoft.</span>
+  </footer>
 </main>
+<script type="module" src="./edition.js"></script>
 <script type="module" src="./boot.js"></script>
 </body>
 </html>

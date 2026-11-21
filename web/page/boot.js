@@ -5,8 +5,7 @@ import init, { horizon_start } from './horizon.js';
 import * as game from './horizon.js';
 import { startNet } from './net.js';
 import { state, lines, useExports, counters } from './std.js';
-
-const RESOURCES = '/horizon/.local/horizon-client/26.3/';
+import { RESOURCES, KEPT, session, isBlocked, openStore, readAll, tx } from './store.js';
 // The game files: beside the page in tests, or on the locked file host that
 // publish.sh names (HORIZON_FILES), which wants the player's access key.
 const PACK = new URL(globalThis.HORIZON_FILES || './pack/', import.meta.url);
@@ -64,6 +63,9 @@ if (globalThis.GPUDevice) {
 let snapshotWaiting = null;
 const snapshotDebug = [];
 let frameTexture = null;
+// The game's first frame (the start screen crossfades to it).
+let firstFrame = null;
+const framed = new Promise((resolve) => { firstFrame = resolve; });
 if (globalThis.GPUCanvasContext) {
   const configure = GPUCanvasContext.prototype.configure;
   GPUCanvasContext.prototype.configure = function (config) {
@@ -72,6 +74,7 @@ if (globalThis.GPUCanvasContext) {
   const current = GPUCanvasContext.prototype.getCurrentTexture;
   GPUCanvasContext.prototype.getCurrentTexture = function () {
     frameTexture = current.call(this);
+    firstFrame?.();
     return frameTexture;
   };
 }
@@ -141,7 +144,10 @@ globalThis.horizon = {
     screen.hidden = false;
     screen.classList.remove('gone');
     screen.classList.add('failed');
+    document.documentElement.classList.remove('auto');
     status.textContent = message;
+    const shown = document.getElementById('fail-message');
+    if (shown) shown.textContent = message;
   },
   log(line) {
     if (screen.classList.contains('playing') && !screen.classList.contains('failed')) {
@@ -151,28 +157,9 @@ globalThis.horizon = {
   state,
 };
 
-// ---- the player's own files (saves, options), kept between visits ----
-const KEPT = (path) => path.startsWith('/horizon/') && !path.startsWith(RESOURCES)
-  && !path.startsWith('/horizon/.horizon-cache/') && !path.startsWith('/horizon/logs/');
-
-function openStore() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('horizon-web', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('files');
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-const tx = (db, mode, fn) => new Promise((resolve, reject) => {
-  const t = db.transaction('files', mode);
-  const out = fn(t.objectStore('files'));
-  t.oncomplete = () => resolve(out?.result);
-  t.onerror = () => reject(t.error);
-});
-
+// ---- the player's own files (saves, options), kept between visits (store.js) ----
 async function restore(db) {
-  const keys = await tx(db, 'readonly', (s) => s.getAllKeys());
-  const values = await tx(db, 'readonly', (s) => s.getAll());
+  const { keys, values } = await readAll(db);
   keys.forEach((path, i) => {
     if (path.endsWith('/')) state.folders.add(path);
     else state.files.set(path, values[i]);
@@ -198,12 +185,12 @@ function keep(db) {
   };
   const later = () => { if (!timer) timer = setTimeout(flush, 250); };
   state.onPersist = (path, bytes) => {
-    if (!KEPT(path)) return;
+    if (!KEPT(path) || isBlocked(path)) return;
     queue.set(path, bytes ?? new Uint8Array(0));
     later();
   };
   state.onForget = (path) => {
-    if (!KEPT(path)) return;
+    if (!KEPT(path) || isBlocked(path)) return;
     for (const key of [...queue.keys()]) if (key === path || key.startsWith(path + '/')) queue.delete(key);
     queue.set(path, undefined);
     later();
@@ -250,43 +237,53 @@ async function loadResources(index) {
 
 // ---- the start screen ----
 const playButton = document.getElementById('play');
-const distance = document.getElementById('distance');
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* private window */ } },
 };
-let viewDistance = Number(store.get('horizon.viewDistance')) || 6;
-function showDistance() {
-  for (const b of distance.querySelectorAll('button')) {
-    b.setAttribute('role', 'radio');
-    b.setAttribute('aria-checked', String(Number(b.dataset.v) === viewDistance));
-  }
-}
-distance.addEventListener('click', (e) => {
-  const v = Number(e.target?.dataset?.v);
-  if (!v) return;
-  viewDistance = v;
-  store.set('horizon.viewDistance', String(v));
-  showDistance();
-});
-showDistance();
+document.getElementById('fail-retry')?.addEventListener('click', () => location.reload());
 
-// The player's name: their WebSim name inside WebSim (letters, digits and _ only, as the game allows).
+// The player's name, as the game allows it: letters, digits and _, 3 to 16.
+const cleanName = (text) => String(text).replace(/[^A-Za-z0-9_]/g, '_').slice(0, 16).padEnd(3, '_');
+const WEBSIM = globalThis.wasmEdition?.websim !== false;
+
+// Inside WebSim: their WebSim name. Elsewhere (plain brand): the name field,
+// remembered in this browser. Returns a function read when Play is pressed.
 async function player() {
+  if (!WEBSIM) {
+    const input = document.getElementById('name-input');
+    let saved = store.get('horizon.name');
+    // A new player gets a suggestion; it is kept once they press Play.
+    if (!saved || !/^[A-Za-z0-9_]{3,16}$/.test(saved)) saved = `Player${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
+    input.value = saved;
+    input.addEventListener('input', () => {
+      const clean = input.value.replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+      if (clean !== input.value) input.value = clean;
+      if (clean.length >= 3) store.set('horizon.name', clean);
+    });
+    input.addEventListener('blur', () => {
+      if (input.value.length < 3) input.value = store.get('horizon.name') || saved;
+    });
+    return () => {
+      const name = cleanName(input.value.length >= 3 ? input.value : (store.get('horizon.name') || saved));
+      store.set('horizon.name', name);
+      return name;
+    };
+  }
   try {
     const user = await globalThis.websim?.getCurrentUser?.();
     if (user?.username) {
-      const name = user.username.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 16).padEnd(3, '_');
+      const name = cleanName(user.username);
       document.getElementById('who-name').textContent = name;
       const avatar = user.avatar_url || user.avatarUrl;
       if (typeof avatar === 'string' && /^https:\/\/[^"'()\\\s]+$/.test(avatar)) {
         document.getElementById('who-avatar').style.backgroundImage = `url("${avatar}")`;
       }
       document.getElementById('who').hidden = false;
-      return name;
+      return () => name;
     }
   } catch { /* outside WebSim */ }
-  return null;
+  return () => null;
 }
 
 // The chosen view distance goes into the game's own options.txt, the file its
@@ -323,6 +320,7 @@ async function fetchIndex() {
     }
     form.hidden = false;
     screen.classList.add('locked');
+    document.documentElement.classList.remove('auto'); // the splash makes room for the key form
     input.reportValidity();
     accessKey = await new Promise((resolve) => form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -364,20 +362,35 @@ async function prepare() {
 async function main() {
   // Everything that does not need the click starts at once, so Play is quick.
   const ready = prepare();
-  const name = await player();
+  const nameOf = await player();
   const urlArgs = new URLSearchParams(location.search).get('args');
-  if (urlArgs === null) {
+  // Auto-start (index.html decides; inside WebSim it also needs the WebSim user).
+  let auto = urlArgs === null && globalThis.wasmEdition?.autoStart === true;
+  if (auto && WEBSIM && !nameOf()) auto = false;
+  if (!auto) document.documentElement.classList.remove('auto');
+  if (urlArgs === null && !auto) {
     await new Promise((resolve) => playButton.addEventListener('click', resolve, { once: true }));
   }
+  try { sessionStorage.removeItem('wasmEdition.menu'); } catch { /* private window */ }
   screen.classList.add('playing');
   const module = await ready;
   if (urlArgs !== null) {
     // Tests: `?args=--world T --creative` replaces the page's own arguments.
     state.args = urlArgs.split(' ').filter(Boolean);
   } else {
-    setViewDistance(viewDistance);
+    // A distance picked in the edition panel applies once, at this start; after
+    // that the game's own Options slider rules. A first start gets 6.
+    const picked = Number(store.get('horizon.viewDistance'));
+    const options = state.files.get(OPTIONS);
+    const known = options instanceof Uint8Array && /^renderDistance:/m.test(new TextDecoder().decode(options));
+    if (picked) setViewDistance(picked);
+    else if (!known) setViewDistance(6);
+    try { localStorage.removeItem('horizon.viewDistance'); } catch { /* private window */ }
+    const name = nameOf();
     state.args = name ? ['--name', name] : [];
   }
+  // From here the game owns its file list: the edition panel's changes wait for a restart.
+  session.started = true;
   const wasm = await init({ module_or_path: module });
   state.memory = wasm.memory;
   useExports(wasm);
@@ -388,17 +401,19 @@ async function main() {
     globalThis.horizon.command = game.horizon_command;
     globalThis.horizon.replies = game.horizon_replies;
   }
-  // The start screen gives way once the game's canvas is on the page.
+  // The start screen crossfades to the game once its canvas is on the page and
+  // has drawn (a couple of frames in, so the first picture is complete).
   new MutationObserver((_, observer) => {
-    if (document.querySelector('body > canvas')) {
-      observer.disconnect();
-      setTimeout(() => {
-        if (screen.classList.contains('failed')) return;
-        screen.classList.add('gone');
-        setTimeout(() => { if (!screen.classList.contains('failed')) screen.hidden = true; }, 400);
-        document.querySelector('body > canvas').focus();
-      }, 300);
-    }
+    const canvas = document.querySelector('body > canvas');
+    if (!canvas) return;
+    observer.disconnect();
+    const ready = Promise.race([framed, new Promise((resolve) => setTimeout(resolve, 6000))]);
+    ready.then(() => new Promise((resolve) => setTimeout(resolve, 250))).then(() => {
+      if (screen.classList.contains('failed')) return;
+      screen.classList.add('gone');
+      setTimeout(() => { if (!screen.classList.contains('failed')) screen.hidden = true; }, 900);
+      canvas.focus();
+    });
   }).observe(document.body, { childList: true });
   horizon_start();
 }
