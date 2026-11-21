@@ -2,7 +2,7 @@
 name = "horizon-web-ureq"
 version = "0.1.0"
 edition = "2024"
-license = "LGPL-3.0-or-later"
+license = "MIT"
 description = "The browser build's stand-in for ureq: the page makes no blocking HTTP calls, so every request fails as a transport error"
 publish = false
 

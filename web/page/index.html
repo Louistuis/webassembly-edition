@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Horizon Browser Edition</title>
+<title>WebAssembly Edition</title>
 <script>Error.stackTraceLimit = 200;</script>
 <script type="importmap">{ "imports": { "horizon_std": "./std.js" } }</script>
 <link rel="stylesheet" href="./start.css">
@@ -13,15 +13,23 @@
   <div class="sky" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
   <section class="card">
     <header>
-      <h1 class="wordmark">Horizon</h1>
-      <p class="edition">Browser Edition</p>
+      <h1 class="wordmark">WebAssembly</h1>
+      <p class="edition">Edition</p>
     </header>
-    <p class="credit">Brought to you by <b>Louis</b>. Built from the open Horizon project.</p>
+    <p class="credit">The full block game in your browser. Brought to you by <b>Louis</b>.</p>
 
     <div class="who" id="who" hidden>
       <span class="avatar" id="who-avatar" aria-hidden="true"></span>
       <span>Playing as <b id="who-name"></b></span>
     </div>
+
+    <form class="key" id="key" hidden>
+      <label for="key-input">This copy is invite only. Paste your access key.</label>
+      <div class="key-row">
+        <input id="key-input" autocomplete="off" spellcheck="false" placeholder="Access key">
+        <button class="block small" type="submit">Unlock</button>
+      </div>
+    </form>
 
     <div class="start" id="start">
       <button class="block face" id="play" type="button">Play</button>
@@ -42,8 +50,9 @@
     </div>
 
     <footer>
-      The real Horizon client, compiled to WebAssembly, rendering with WebGPU.
+      A complete game client compiled to WebAssembly, rendering with WebGPU.
       Worlds are kept in this browser. Works best in a current Chrome, Edge or Safari.
+      <span class="oss">Client: open-source Horizon (MIT).</span>
     </footer>
   </section>
 </main>

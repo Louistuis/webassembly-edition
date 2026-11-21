@@ -1,3 +1,8 @@
+> **WebAssembly Edition.** This fork adds a browser build: the client compiled to WebAssembly,
+> rendering with WebGPU, playable in a tab (WebSim). How it works, how to build, test and publish it:
+> [docs/web.md](docs/web.md). Everything else is [Horizon](https://github.com/horizon-rust/horizon) as
+> upstream ships it. No Mojang files are in this repository.
+
 <p align="center">
   <img src="docs/media/banner.webp" alt="Horizon: Minecraft: Java Edition 26.3, rewritten in Rust and checked against vanilla by 281 differential harnesses" width="100%">
 </p>

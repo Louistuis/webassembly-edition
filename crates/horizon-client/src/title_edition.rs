@@ -1,4 +1,5 @@
-//! "RUST EDITION" under the classic title screen's logo.
+//! "RUST EDITION" under the classic title screen's logo ("WASM EDITION" in
+//! the browser build, docs/web.md).
 //!
 //! Vanilla's `textures/gui/title/edition.png` reads "JAVA EDITION". Horizon
 //! never ships Mojang's art, so the banner is rebuilt at load time from the
@@ -53,6 +54,21 @@ const S: &[[usize; 4]] = &[
     [31, 21, 42, 32],
     [0, 29, 35, 39],
 ];
+
+/// The browser build's W, A and M (with the S above), drawn the same way:
+/// U with a middle stem, an A with a crossbar, an upside-down U with a middle stem.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const W: &[[usize; 4]] = &[[0, 0, 11, 32], [31, 0, 42, 32], [17, 14, 25, 39], [7, 29, 35, 39]];
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const A: &[[usize; 4]] = &[[7, 0, 35, 10], [0, 7, 11, 39], [31, 7, 42, 39], [0, 19, 42, 28]];
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const M: &[[usize; 4]] = &[[7, 0, 35, 10], [0, 7, 11, 39], [31, 7, 42, 39], [17, 0, 25, 25]];
+
+/// The letters drawn in place of "JAVA".
+#[cfg(not(target_arch = "wasm32"))]
+const GLYPHS: [&[[usize; 4]]; 3] = [R, U, S];
+#[cfg(target_arch = "wasm32")]
+const GLYPHS: [&[[usize; 4]]; 4] = [W, A, S, M];
 
 /// The banner rebuilt to read "RUST EDITION", or `None` when the texture is
 /// not vanilla's (a resource pack's own).
@@ -129,7 +145,7 @@ impl Palette {
 /// Faces of the new glyphs, positioned in the texture.
 fn glyph_faces() -> Vec<bool> {
     let mut face = vec![false; WIDTH * HEIGHT];
-    for (i, glyph) in [R, U, S].into_iter().enumerate() {
+    for (i, glyph) in GLYPHS.into_iter().enumerate() {
         let left = FIRST_FACE + i * (GLYPH_WIDTH + LETTER_GAP);
         for &[x0, y0, x1, y1] in glyph {
             for y in FACE_TOP + y0..FACE_TOP + y1 {
@@ -329,9 +345,12 @@ fn compose(pixels: &[u8]) -> Vec<u8> {
         row[..EDITION_START * 4].fill(0);
     }
     draw_glyphs(&mut out, &glyph_faces(), &palette, 0..EDITION_START);
-    let left = t_left();
-    for (x, y) in t_pixels(pixels) {
-        put(&mut out, x + left - T_BODY.0, y, pixel(pixels, x, y));
+    // "RUST" takes its T from "EDITION"; "WASM" is all drawn.
+    if !cfg!(target_arch = "wasm32") {
+        let left = t_left();
+        for (x, y) in t_pixels(pixels) {
+            put(&mut out, x + left - T_BODY.0, y, pixel(pixels, x, y));
+        }
     }
     fill_counters(&mut out, palette.outline);
     soften_edges(&mut out, palette.soft);

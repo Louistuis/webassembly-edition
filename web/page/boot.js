@@ -5,7 +5,10 @@ import init, { horizon_start } from './horizon.js';
 import { state, lines } from './std.js';
 
 const RESOURCES = '/horizon/.local/horizon-client/26.3/';
-const PACK = new URL(globalThis.HORIZON_PACK || './pack/', import.meta.url);
+// The game files: beside the page in tests, or on the locked file host that
+// publish.sh names (HORIZON_FILES), which wants the player's access key.
+const PACK = new URL(globalThis.HORIZON_FILES || './pack/', import.meta.url);
+const LOCKED = Boolean(globalThis.HORIZON_FILES);
 const screen = document.getElementById('boot');
 const bar = document.getElementById('boot-bar');
 const status = document.getElementById('boot-status');
@@ -201,8 +204,11 @@ function keep(db) {
 }
 
 // ---- the game's files ----
+let accessKey = null;
+const fetchFile = (name) => fetch(new URL(name, PACK), LOCKED ? { headers: { 'x-access-key': accessKey ?? '' } } : {});
+
 async function fetchChunk(chunk, onBytes) {
-  const response = await fetch(new URL(chunk.name, PACK));
+  const response = await fetchFile(chunk.name);
   if (!response.ok) throw new Error(`${chunk.name}: ${response.status}`);
   let body = response.body;
   if (onBytes) {
@@ -286,11 +292,41 @@ function setViewDistance(v) {
   state.files.set(OPTIONS, new TextEncoder().encode(text));
 }
 
+// The index, asking for the access key until the file host takes it.
+async function fetchIndex() {
+  const form = document.getElementById('key');
+  const input = document.getElementById('key-input');
+  accessKey = store.get('horizon.key');
+  for (;;) {
+    if (!LOCKED || accessKey) {
+      const response = await fetchFile('index.json');
+      if (response.ok) {
+        if (LOCKED) store.set('horizon.key', accessKey);
+        form.hidden = true;
+        screen.classList.remove('locked');
+        return response.json();
+      }
+      if (!LOCKED || (response.status !== 401 && response.status !== 403)) {
+        throw new Error(`Could not get the game files (${response.status}).`);
+      }
+      if (!form.hidden) input.setCustomValidity('That key did not work.');
+    }
+    form.hidden = false;
+    screen.classList.add('locked');
+    input.reportValidity();
+    accessKey = await new Promise((resolve) => form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      input.setCustomValidity('');
+      resolve(input.value.trim());
+    }, { once: true }));
+  }
+}
+
 async function prepare() {
   if (!navigator.gpu) {
     throw new Error('This browser has no WebGPU. Use a current Chrome, Edge or Safari.');
   }
-  const index = await (await fetch(new URL('index.json', PACK))).json();
+  const index = await fetchIndex();
   // The game's code compiles while the files load. Published copies keep it
   // gzipped (`wasm` in the index, web/publish.sh).
   const module = (async () => {
@@ -311,7 +347,7 @@ async function prepare() {
     console.warn('Horizon: no browser storage, worlds will not be kept', e);
   }
   await loadResources(index);
-  status.textContent = 'Starting Horizon';
+  status.textContent = 'Starting the game';
   return module;
 }
 

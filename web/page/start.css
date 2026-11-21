@@ -61,10 +61,10 @@ body > canvas { position: fixed; inset: 0; width: 100vw !important; height: 100v
 }
 header { display: grid; gap: 2px; }
 .wordmark {
-  margin: 0; font: 600 clamp(44px, 12vw, 60px)/0.9 var(--pixel); letter-spacing: 0;
+  margin: 0; font: 600 clamp(36px, 11vw, 52px)/0.95 var(--pixel); letter-spacing: 0;
   color: #fff; text-shadow: 0 4px 0 var(--face-lip);
 }
-.edition { margin: 0; font: 600 18px/1.2 var(--pixel); color: var(--accent); letter-spacing: .02em; }
+.edition { margin: 0; font: 600 22px/1.2 var(--pixel); color: var(--accent); letter-spacing: .02em; }
 .credit { margin: 0; color: var(--ink-soft); }
 .credit b { color: var(--ink); font-weight: 500; }
 
@@ -106,6 +106,18 @@ header { display: grid; gap: 2px; }
 #boot.failed #boot-status { color: var(--danger); white-space: pre-wrap; }
 #boot.failed .start { display: none; }
 
+.key { display: grid; gap: 8px; }
+.key[hidden] { display: none; }
+.key label { color: var(--ink-soft); font-size: 14px; }
+.key-row { display: flex; gap: 8px; }
+.key input {
+  flex: 1; min-width: 0; padding: 10px 12px; border: 2px solid var(--outline); background: var(--lip);
+  color: var(--ink); font: 400 14px/1 var(--font);
+}
+.key input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.block.small { font-size: 16px; padding: 10px 14px 12px; }
+#boot.locked .start { display: none; }
+footer .oss { display: block; margin-top: 6px; }
 footer { color: var(--muted); font-size: 12px; line-height: 1.5; border-top: 2px solid var(--outline); padding-top: 14px; }
 
 @media (prefers-reduced-motion: reduce) { .sky i { animation: none; } .block, #boot { transition: none; } }
