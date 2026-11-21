@@ -44,7 +44,11 @@ It runs the same code as the native client; the differences below are all behind
   with a proof of the access key (SHA-256 of the key with both members' room ids), under the guest's
   own WebSim name (never the host's), with caps on connections, unread bytes and packets per second
   (500, bursts of 2000). On the host, digging and using items on blocks check reach as vanilla does,
-  chat has vanilla's spam throttle and oversized creative stacks are ignored. Room messages still reach
+  chat has vanilla's spam throttle and oversized creative stacks are ignored. Flight is not allowed
+  (`Hub::strict_movement`): a guest floating in the air for 4 seconds without a way to fly is
+  disconnected, as on a dedicated server with allow-flight off, and on foot a guest may cover at most
+  1 block a tick (20% more per Speed level) with 60 blocks saved up, or is sent back.
+  `web/test/cheats.mjs` flies, dashes and spams as a cheating guest would. Room messages still reach
   every member, so what players send each other is not private from others in the room.
 - **No sound yet.**
 - The title screen reads "WASM EDITION" and "WebAssembly Edition 26.3".

@@ -67,6 +67,13 @@ pub struct Guest {
     /// ServerGamePacketListenerImpl.chatSpamThrottler (TickThrottler(20, 200)):
     /// the count and the hub tick it was last brought down to.
     pub chat_spam: (u64, u64),
+    /// ServerGamePacketListenerImpl.clientIsFloating and aboveGroundTickCount
+    /// (checked where flight is not allowed: `Hub::strict_movement`).
+    pub floating: bool,
+    pub above_ground_ticks: u32,
+    /// `Hub::strict_movement`: blocks the player may still cover on foot
+    /// before a move counts as too quick (refilled every tick).
+    pub walk_budget: f64,
     /// The next ClientboundPlayerChatPacket.globalIndex for this connection.
     pub chat_index: i32,
     /// Secure chat (ServerGamePacketListenerImpl): the player's message
@@ -271,6 +278,9 @@ impl Guest {
             address: j.address,
             last_action_tick: 0,
             chat_spam: (0, 0),
+            floating: false,
+            above_ground_ticks: 0,
+            walk_budget: super::hub::WALK_BURST,
             chat_index: 0,
             chain: Default::default(),
             last_seen: Default::default(),

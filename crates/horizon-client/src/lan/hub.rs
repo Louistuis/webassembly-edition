@@ -113,6 +113,11 @@ pub struct BodyFlags {
     pub glowing: bool,
 }
 
+/// `Hub::strict_movement`: blocks a player may cover a tick on foot (sprint
+/// jumping is about 0.3, so this is far above it), and the most saved up.
+pub const WALK_SPEED: f64 = 1.0;
+pub const WALK_BURST: f64 = 60.0;
+
 /// Everything the hub needs from the game for one tick.
 pub struct TickCtx<'a> {
     pub world: &'a mut World,
@@ -173,6 +178,11 @@ pub struct Hub {
     /// The `player_movement_check` and `elytra_movement_check` game rules,
     /// set by the game before each tick.
     pub movement_checks: (bool, bool),
+    /// Players may not fly and may not outrun what the game lets them walk
+    /// (the browser build, whose players come from a public room). Vanilla's
+    /// dedicated server with allow-flight off kicks a floating player; the
+    /// walking budget is Horizon's own, far above any legitimate speed.
+    pub strict_movement: bool,
     /// The `immediate_respawn` game rule, as the players were last told.
     immediate_respawn: bool,
     /// An integrated server's owner (`MinecraftServer.isSingleplayerOwner`),
@@ -363,6 +373,7 @@ impl Hub {
             ticks: 0,
             immediate_respawn: false,
             movement_checks: (true, true),
+            strict_movement: cfg!(target_arch = "wasm32"),
             singleplayer_owner: None,
             flat_world: false,
             riding: Default::default(),
@@ -1179,6 +1190,9 @@ impl Hub {
         for i in 0..self.guests.len() {
             if self.here(&self.guests[i]) {
                 self.process_inbox(i, ctx, &mut events);
+                if self.strict_movement {
+                    self.tick_strict_movement(i, &mut events);
+                }
             }
         }
         if !self.guests.iter().any(|g| self.here(g)) {
@@ -2340,6 +2354,27 @@ impl Hub {
             }
         }
         let start = g.position;
+        // Strict movement: on foot (not flying with an elytra, spinning with
+        // Riptide, in creative or spectator), a player covers at most
+        // `walk_speed` a tick, with a burst for knockback and lag.
+        if self.strict_movement
+            && !owner
+            && !g.creative()
+            && !g.spectator()
+            && !g.fall_flying
+            && g.living_flags & 4 == 0
+        {
+            let walked = (to[0] - start[0]).hypot(to[2] - start[2]);
+            if walked > g.walk_budget {
+                events.push(HostEvent::Warn(format!(
+                    "{} moved too quickly! (strict)",
+                    g.name
+                )));
+                self.teleport(i, None);
+                return;
+            }
+            g.walk_budget -= walked;
+        }
         let (wrongly, refused) = self.collide(i, to, ctx);
         if wrongly {
             let line = format!("{} moved wrongly!", self.guests[i].name);
@@ -2366,6 +2401,72 @@ impl Hub {
         g.head_yaw = g.yaw;
         g.on_ground = flags & 1 != 0;
         g.ticks = g.ticks.max(1);
+        if self.strict_movement {
+            self.update_floating(i, start, ctx);
+        }
+    }
+
+    /// handleMovePlayer's clientIsFloating, where flight is not allowed: not
+    /// falling, not on the ground, no way to fly, and only air around.
+    fn update_floating(&mut self, i: usize, start: [f64; 3], ctx: &TickCtx) {
+        let g = &self.guests[i];
+        let may_fly = g.ability_flags() & 4 != 0;
+        let floating = g.position[1] - start[1] >= -0.03125
+            && !g.on_ground
+            && !g.spectator()
+            && !may_fly
+            && g.effects.get("levitation").is_none()
+            && !g.fall_flying
+            && g.living_flags & 4 == 0
+            && {
+                // noBlocksAround: the box grown by 1/16 and 0.55 down.
+                let d = g.dimensions();
+                let half = f64::from(d.width) / 2.0 + 0.0625;
+                let [x, y, z] = g.position;
+                let (x0, x1) = ((x - half).floor() as i32, (x + half).floor() as i32);
+                let (z0, z1) = ((z - half).floor() as i32, (z + half).floor() as i32);
+                let y0 = (y - 0.0625 - 0.55).floor() as i32;
+                let y1 = (y + f64::from(d.height) + 0.0625).floor() as i32;
+                (x0..=x1).all(|bx| {
+                    (y0..=y1).all(|by| {
+                        (z0..=z1).all(|bz| {
+                            self.encoder
+                                .is_air(u32::from(ctx.world.block(bx, by, bz).0))
+                        })
+                    })
+                })
+            };
+        self.guests[i].floating = floating;
+    }
+
+    /// The strict movement checks' tick (ServerGamePacketListenerImpl.tick):
+    /// floating too long disconnects; the walking budget fills up.
+    fn tick_strict_movement(&mut self, i: usize, events: &mut Vec<HostEvent>) {
+        let g = &mut self.guests[i];
+        let speed = g.effects.amplifier("speed").map_or(0, |a| a + 1);
+        g.walk_budget =
+            (g.walk_budget + WALK_SPEED * (1.0 + 0.2 * f64::from(speed))).min(WALK_BURST);
+        if g.floating && !g.sleeping && g.vehicle.is_none() && !g.dead {
+            g.above_ground_ticks += 1;
+            // getMaximumFlyingTicks: 80, longer under Slow Falling's low gravity.
+            let max = if g.effects.get("slow_falling").is_some() {
+                640
+            } else {
+                80
+            };
+            if g.above_ground_ticks > max {
+                events.push(HostEvent::Warn(format!(
+                    "{} was kicked for floating too long!",
+                    g.name
+                )));
+                let conn = g.conn;
+                g.above_ground_ticks = 0;
+                self.kick(conn, translatable("multiplayer.disconnect.flying", &[]));
+            }
+        } else {
+            g.floating = false;
+            g.above_ground_ticks = 0;
+        }
     }
 
     /// The collision part of handlePlayerPositionChange: whether the move
