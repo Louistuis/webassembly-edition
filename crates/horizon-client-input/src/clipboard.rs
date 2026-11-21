@@ -106,13 +106,41 @@ pub trait Clipboard {
     fn set(&mut self, text: &str);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type SystemBoard = arboard::Clipboard;
+#[cfg(not(target_arch = "wasm32"))]
+fn content_not_available(e: &arboard::Error) -> bool {
+    matches!(e, arboard::Error::ContentNotAvailable)
+}
+
+/// The browser build (docs/web.md) has no synchronous system clipboard: text
+/// copied in the game is pasted in the game.
+#[cfg(target_arch = "wasm32")]
+struct SystemBoard;
+#[cfg(target_arch = "wasm32")]
+impl SystemBoard {
+    fn new() -> Result<Self, ()> {
+        Err(())
+    }
+    fn get_text(&mut self) -> Result<String, ()> {
+        Err(())
+    }
+    fn set_text(&mut self, _text: String) -> Result<(), ()> {
+        Err(())
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn content_not_available(_e: &()) -> bool {
+    false
+}
+
 /// The system clipboard (`ClipboardManager`). On Wayland, arboard uses the
 /// data-control protocol and falls back to X11 (XWayland) on compositors
 /// without it. When no system clipboard can be reached, text copied in the
 /// game can still be pasted in the game.
 #[derive(Default)]
 pub struct SystemClipboard {
-    system: Option<arboard::Clipboard>,
+    system: Option<SystemBoard>,
     /// The text Horizon last copied (`horizon-ctl status`).
     copied: Option<String>,
 }
@@ -122,9 +150,9 @@ impl SystemClipboard {
     pub fn copied(&self) -> Option<&str> {
         self.copied.as_deref()
     }
-    fn system(&mut self) -> Option<&mut arboard::Clipboard> {
+    fn system(&mut self) -> Option<&mut SystemBoard> {
         if self.system.is_none() {
-            self.system = arboard::Clipboard::new().ok();
+            self.system = SystemBoard::new().ok();
         }
         self.system.as_mut()
     }
@@ -137,7 +165,7 @@ impl Clipboard for SystemClipboard {
         };
         match system.get_text() {
             Ok(text) => text,
-            Err(arboard::Error::ContentNotAvailable) => String::new(),
+            Err(e) if content_not_available(&e) => String::new(),
             Err(_) => {
                 // A lost connection (a restarted compositor): reconnect next time.
                 self.system = None;

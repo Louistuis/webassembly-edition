@@ -428,6 +428,11 @@ fn open(path: &std::path::Path) -> io::Result<Box<dyn Pipe>> {
     Ok(Box::new(stream))
 }
 
+/// The browser build (docs/web.md) has no Discord socket to reach.
+#[cfg(target_arch = "wasm32")]
+fn open(_path: &std::path::Path) -> io::Result<Box<dyn Pipe>> {
+    Err(io::ErrorKind::Unsupported.into())
+}
 #[cfg(windows)]
 fn open(path: &std::path::Path) -> io::Result<Box<dyn Pipe>> {
     let pipe = std::fs::OpenOptions::new()

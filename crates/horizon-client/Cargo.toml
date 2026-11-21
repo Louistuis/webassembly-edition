@@ -54,16 +54,36 @@ flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", 
 horizon-theme = { path = "../horizon-theme" }
 # Opt-in data collection: the game keeps, the launcher sends (docs/telemetry.md); `live` is
 # the anonymous "I'm playing" ping the game sends itself (`heartbeat.rs`).
-horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
+horizon-telemetry = { path = "../horizon-telemetry", default-features = false }
 horizon-bench = { path = "../horizon-bench" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
 gilrs = { version = "0.11", optional = true }
 # The DualSense's rumble, adaptive triggers and lights over HID (gilrs only reads it).
 horizon-dualsense = { path = "../horizon-dualsense", optional = true }
+
+unicode-bidi = "0.3.18"
+
+# Native only: the browser build (wasm32, docs/web.md) has no sockets, system clipboard or blocking HTTPS.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 # HTTPS to the Minecraft services (online-mode session join).
 ureq = { version = "2", default-features = false, features = ["tls"] }
-unicode-bidi = "0.3.18"
+
+# The browser build: WebGPU, the page's clock, randomness and canvas.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "webgpu", "wgsl"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Performance", "console"] }
+web-time = "1"
+# No HTTP from the page: online-mode join, skins and server packs answer "unavailable".
+horizon-web-ureq = { path = "../../web/ureq-stub" }
+console_error_panic_hook = "0.1"
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).

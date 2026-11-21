@@ -54,7 +54,7 @@ fn run(endpoint: &str) {
     let mut failed = false;
     loop {
         let ping = Ping::new(&session, &version, LAN.load(Ordering::Relaxed));
-        match live::send(endpoint, &ping) {
+        match send(endpoint, &ping) {
             Ok(()) => {
                 wait = live::INTERVAL;
                 failed = false;
@@ -71,4 +71,14 @@ fn run(endpoint: &str) {
         // Woken early by `set_lan`; a spurious wake only sends one ping more.
         std::thread::park_timeout(wait);
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn send(endpoint: &str, ping: &Ping) -> Result<(), String> {
+    live::send(endpoint, ping)
+}
+/// The browser build (docs/web.md) sends no live count ping.
+#[cfg(target_arch = "wasm32")]
+fn send(_endpoint: &str, _ping: &Ping) -> Result<(), String> {
+    Err("not in the browser".into())
 }

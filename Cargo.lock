@@ -471,6 +471,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "coords-hud"
 version = "0.1.0"
 dependencies = [
@@ -1133,8 +1143,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1144,9 +1156,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1376,10 +1390,14 @@ name = "horizon-client"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "arboard",
  "bytemuck",
  "chrono",
+ "console_error_panic_hook",
  "cpal",
  "flate2",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "gilrs",
  "glam",
  "horizon-assets",
@@ -1400,7 +1418,9 @@ dependencies = [
  "horizon-telemetry",
  "horizon-theme",
  "horizon-threads",
+ "horizon-web-ureq",
  "horizon-world",
+ "js-sys",
  "log",
  "miniz_oxide 0.8.9",
  "naga",
@@ -1415,6 +1435,10 @@ dependencies = [
  "symphonia",
  "unicode-bidi",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "wgpu",
  "winit",
  "winresource",
@@ -1670,6 +1694,10 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "horizon-web-ureq"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-world"

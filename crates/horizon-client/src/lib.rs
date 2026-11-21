@@ -1,6 +1,9 @@
 //! Horizon native client: resources, world streaming, rendering and the
 //! bindings between the validated simulation pieces and the game loop.
 #![forbid(unsafe_code)]
+// The browser build (docs/web.md): ureq's calls, failing as unavailable.
+#[cfg(target_arch = "wasm32")]
+extern crate horizon_web_ureq as ureq;
 pub mod advancements;
 pub mod ambience;
 pub mod animate_tick;

@@ -7,6 +7,7 @@ use crate::{
     user_lists::NameAndId,
 };
 use horizon_protocol::rsa::RsaPublicKey;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 /// Mojang's services discovery document.
@@ -43,13 +44,29 @@ pub fn resolve(name: &str, online: bool) -> Option<NameAndId> {
 /// `name` (any case), or None when there is none or the services don't
 /// answer (vanilla logs both as "Couldn't find profile with name").
 pub fn find_by_name(discovery: &str, name: &str) -> Option<NameAndId> {
-    let agent = ureq::AgentBuilder::new()
+    let doc = json::parse(&get_text(discovery)?, true).ok()?;
+    let url = endpoint(&doc, "profiles", "getByName")?.replace("{name}", &name.to_lowercase());
+    found(&get_text(&url)?, name)
+}
+
+/// One GET to the services, as text; None when they don't answer.
+#[cfg(not(target_arch = "wasm32"))]
+fn get_text(url: &str) -> Option<String> {
+    ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
         .user_agent(&format!("Horizon/{}", horizon_core::release::VERSION))
-        .build();
-    let doc = json::parse(&agent.get(discovery).call().ok()?.into_string().ok()?, true).ok()?;
-    let url = endpoint(&doc, "profiles", "getByName")?.replace("{name}", &name.to_lowercase());
-    found(&agent.get(&url).call().ok()?.into_string().ok()?, name)
+        .build()
+        .get(url)
+        .call()
+        .ok()?
+        .into_string()
+        .ok()
+}
+
+/// The browser build has no blocking HTTPS: the services never answer.
+#[cfg(target_arch = "wasm32")]
+fn get_text(_url: &str) -> Option<String> {
+    None
 }
 
 /// MinecraftServicesKeyInfo.get: the services' public keys from the
@@ -59,16 +76,11 @@ pub fn find_by_name(discovery: &str, name: &str) -> Option<NameAndId> {
 /// line vanilla logs, after which it has no keys.
 pub fn fetch_profile_key_keys(discovery: &str) -> Result<Vec<RsaPublicKey>, &'static str> {
     const FAILED: &str = "Failed to request Minecraft Services public key";
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
-        .user_agent(&format!("Horizon/{}", horizon_core::release::VERSION))
-        .build();
-    let get = |url: &str| agent.get(url).call().ok()?.into_string().ok();
-    let doc = get(discovery)
+    let doc = get_text(discovery)
         .and_then(|d| json::parse(&d, true).ok())
         .ok_or(FAILED)?;
     let url = endpoint(&doc, "authentication", "getPublicKeys").ok_or(FAILED)?;
-    profile_key_keys(&get(&url).ok_or(FAILED)?)
+    profile_key_keys(&get_text(&url).ok_or(FAILED)?)
 }
 
 /// The key set answer: `{"profilePropertyKeys": [...], "playerCertificateKeys":

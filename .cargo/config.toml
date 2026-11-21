@@ -1,0 +1,3 @@
+# The browser build (docs/web.md): getrandom 0.3 takes its randomness from the page's crypto.getRandomValues.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
