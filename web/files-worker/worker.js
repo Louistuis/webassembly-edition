@@ -40,7 +40,10 @@ export default {
     const response = await env.ASSETS.fetch(request);
     const out = new Response(response.body, response);
     for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
-    out.headers.set('cache-control', 'private, max-age=604800');
+    // A chunk named after its contents never changes; everything else (the
+    // index above all) is checked with the host on every visit.
+    const hashed = /-[0-9a-f]{10}\.bin$/.test(new URL(request.url).pathname);
+    out.headers.set('cache-control', hashed ? 'private, max-age=31536000, immutable' : 'private, no-cache');
     return out;
   },
 };

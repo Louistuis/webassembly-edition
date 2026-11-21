@@ -201,7 +201,7 @@ function keep(db) {
 
 // ---- the game's files ----
 let accessKey = null;
-const fetchFile = (name) => fetch(new URL(name, PACK), LOCKED ? { headers: { 'x-access-key': accessKey ?? '' } } : {});
+const fetchFile = (name, options = {}) => fetch(new URL(name, PACK), LOCKED ? { ...options, headers: { 'x-access-key': accessKey ?? '' } } : options);
 
 async function fetchChunk(chunk, onBytes) {
   const response = await fetchFile(chunk.name);
@@ -358,7 +358,9 @@ async function fetchIndex() {
   accessKey = store.get('horizon.key');
   for (;;) {
     if (!LOCKED || accessKey) {
-      const response = await fetchFile('index.json');
+      // Always the file host's current list, never a copy the browser kept: a
+      // stale one names chunks that are gone (and once had no sounds at all).
+      const response = await fetchFile('index.json', { cache: 'no-cache' });
       if (response.ok) {
         if (LOCKED) store.set('horizon.key', accessKey);
         form.hidden = true;
