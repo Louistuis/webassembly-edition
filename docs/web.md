@@ -40,6 +40,12 @@ It runs the same code as the native client; the differences below are all behind
   room's worlds (as LAN worlds, address `websim:<member>`); joining connects over the room. The bytes
   are Horizon's own protocol over in-memory pipes, base64 in ordered room messages. `?room=local` uses a
   BroadcastChannel room between tabs instead (tests: `web/test/duo.mjs`).
+- **Guests are not trusted.** Anyone who opens the page is in the room, so a host takes a guest only
+  with a proof of the access key (SHA-256 of the key with both members' room ids), under the guest's
+  own WebSim name (never the host's), with caps on connections, unread bytes and packets per second
+  (500, bursts of 2000). On the host, digging and using items on blocks check reach as vanilla does,
+  chat has vanilla's spam throttle and oversized creative stacks are ignored. Room messages still reach
+  every member, so what players send each other is not private from others in the room.
 - **No sound yet.**
 - The title screen reads "WASM EDITION" and "WebAssembly Edition 26.3".
 
