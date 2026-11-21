@@ -220,6 +220,8 @@ pub struct Streaming {
     light_view: Arc<dyn Fn(&Proto) -> Option<Chunk> + Send + Sync>,
     results: mpsc::Receiver<Done>,
     threads: Vec<thread::JoinHandle<()>>,
+    /// The browser build's worker, run on the game's thread (`pump`).
+    inline: Option<Box<dyn Pump>>,
     order: u64,
     /// Ticks since the columns and protos that fell out of range were swept.
     scan_age: u8,
@@ -437,6 +439,116 @@ impl GenerationScan {
         }
     }
 }
+/// One worker: its generator state and the face visibility cache it keeps
+/// across mesh jobs, like vanilla's per-thread cache (cloning it per job
+/// copied every state and face shape).
+struct Worker<G: ChunkGenerator> {
+    shared: Arc<Shared>,
+    send: mpsc::Sender<Done>,
+    generator: Arc<G>,
+    light: Arc<LightTables>,
+    worker: G::Worker,
+    faces: Option<(Arc<MeshTables>, FaceVisibility)>,
+}
+impl<G: ChunkGenerator> Worker<G> {
+    /// The next job, waiting for one; `None` once the streamer stops.
+    fn next_job(&self) -> Option<Job> {
+        let mut queue = self.shared.queue.lock().unwrap();
+        loop {
+            if self.shared.stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            if let Some(job) = queue.pop() {
+                return Some(job.job);
+            }
+            queue = self.shared.ready.wait(queue).unwrap();
+        }
+    }
+    fn run(&mut self, job: Job) -> Done {
+        match job {
+            Job::Generate(x, z) => match self.generator.load(x, z) {
+                Some(chunk) => {
+                    self.generator.prepare_loaded(&mut self.worker, &chunk);
+                    Done::Generated(chunk)
+                }
+                None => {
+                    let proto = self.generator.proto(&mut self.worker, x, z);
+                    let decorated = self.generator.is_decorated(&proto);
+                    Done::Proto(x, z, proto, decorated)
+                }
+            },
+            Job::Decorate(x, z, mut region) => {
+                self.generator.decorate(&mut self.worker, &mut region);
+                Done::Decorated(x, z, region)
+            }
+            Job::Finish(proto) => Done::Generated(self.generator.finish(proto)),
+            Job::Save(protos) => {
+                let refs: Vec<&Proto> = protos.iter().map(|(_, p)| p).collect();
+                self.generator.save_protos(&refs);
+                Done::Saved(protos)
+            }
+            Job::Light(x, z, region, seq, sky) => {
+                Done::Lit(x, z, light_chunk(&borrow(&region), &self.light, sky), seq)
+            }
+            Job::Mesh(x, sy, z, region, seq, settings) => {
+                let context = self.shared.context.read().unwrap().clone();
+                let visibility = match self.faces.take() {
+                    Some((tables, visibility)) if Arc::ptr_eq(&tables, &context.tables) => {
+                        visibility
+                    }
+                    _ => context.tables.visibility.clone(),
+                };
+                let mut mesher = Mesher {
+                    nether_shading: settings.nether,
+                    zoom: settings.zoom,
+                    blend_radius: settings.blend_radius,
+                    smooth_lighting: settings.smooth_lighting,
+                    cutout_leaves: settings.cutout_leaves,
+                    assets: &context.assets,
+                    render: &context.render,
+                    tables: &context.tables,
+                    biomes: &context.biomes,
+                    visibility,
+                };
+                let mut mesh = mesher.mesh(&borrow(&region), sy);
+                mesh.sort_solid();
+                self.faces = Some((context.tables.clone(), mesher.visibility));
+                Done::Meshed(x, sy, z, mesh, seq)
+            }
+        }
+    }
+}
+/// Runs queued jobs on the calling thread (the browser build).
+trait Pump: Send {
+    /// Runs jobs until the queue is empty or `budget` has passed; whether any ran.
+    fn pump(&mut self, budget: std::time::Duration) -> bool;
+}
+impl<G: ChunkGenerator> Pump for Worker<G> {
+    fn pump(&mut self, budget: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        let mut ran = false;
+        loop {
+            let job = self.shared.queue.lock().unwrap().pop();
+            let Some(job) = job else { return ran };
+            let done = self.run(job.job);
+            ran = true;
+            if self.send.send(done).is_err() || started.elapsed() >= budget {
+                return ran;
+            }
+        }
+    }
+}
+/// How long each frame runs chunk jobs in the browser build (docs/web.md):
+/// `HORIZON_WEB_PUMP_MS`, 12 ms by default.
+fn web_pump_budget() -> std::time::Duration {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    std::time::Duration::from_millis(*MS.get_or_init(|| {
+        std::env::var("HORIZON_WEB_PUMP_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12)
+    }))
+}
 pub struct WorkerContext {
     pub assets: Arc<crate::assets::Assets>,
     pub render: Arc<crate::assets::RenderAssets>,
@@ -459,89 +571,28 @@ impl Streaming {
         let (send, results) = mpsc::channel();
         let light_tables = context.light.clone();
         let saves: Arc<dyn Saves> = generator.clone();
-        let threads = (0..threads.max(1))
+        let threads = (0..if cfg!(target_arch = "wasm32") {
+            0
+        } else {
+            threads.max(1)
+        })
             .map(|i| {
-                let shared = shared.clone();
-                let send = send.clone();
-                let generator = generator.clone();
-                let light = context.light.clone();
+                let mut worker = Worker {
+                    shared: shared.clone(),
+                    send: send.clone(),
+                    generator: generator.clone(),
+                    light: context.light.clone(),
+                    worker: generator.worker(),
+                    faces: None,
+                };
                 thread::Builder::new()
                     .name(format!("horizon-worker-{i}"))
                     .spawn(move || {
                         // Ticks and frames come first (horizon_threads).
                         horizon_threads::behind_server();
-                        let mut worker = generator.worker();
-                        // The face visibility table and its occlusion cache stay with
-                        // the worker across mesh jobs, like vanilla's per-thread cache:
-                        // cloning it per job copied every state and face shape.
-                        let mut faces: Option<(Arc<MeshTables>, FaceVisibility)> = None;
-                        loop {
-                            let job = {
-                                let mut queue = shared.queue.lock().unwrap();
-                                loop {
-                                    if shared.stop.load(Ordering::Relaxed) {
-                                        return;
-                                    }
-                                    if let Some(job) = queue.pop() {
-                                        break job.job;
-                                    }
-                                    queue = shared.ready.wait(queue).unwrap();
-                                }
-                            };
-                            let done = match job {
-                                Job::Generate(x, z) => match generator.load(x, z) {
-                                    Some(chunk) => {
-                                        generator.prepare_loaded(&mut worker, &chunk);
-                                        Done::Generated(chunk)
-                                    }
-                                    None => {
-                                        let proto = generator.proto(&mut worker, x, z);
-                                        let decorated = generator.is_decorated(&proto);
-                                        Done::Proto(x, z, proto, decorated)
-                                    }
-                                },
-                                Job::Decorate(x, z, mut region) => {
-                                    generator.decorate(&mut worker, &mut region);
-                                    Done::Decorated(x, z, region)
-                                }
-                                Job::Finish(proto) => Done::Generated(generator.finish(proto)),
-                                Job::Save(protos) => {
-                                    let refs: Vec<&Proto> = protos.iter().map(|(_, p)| p).collect();
-                                    generator.save_protos(&refs);
-                                    Done::Saved(protos)
-                                }
-                                Job::Light(x, z, region, seq, sky) => {
-                                    Done::Lit(x, z, light_chunk(&borrow(&region), &light, sky), seq)
-                                }
-                                Job::Mesh(x, sy, z, region, seq, settings) => {
-                                    let context = shared.context.read().unwrap().clone();
-                                    let visibility = match faces.take() {
-                                        Some((tables, visibility))
-                                            if Arc::ptr_eq(&tables, &context.tables) =>
-                                        {
-                                            visibility
-                                        }
-                                        _ => context.tables.visibility.clone(),
-                                    };
-                                    let mut mesher = Mesher {
-                                        nether_shading: settings.nether,
-                                        zoom: settings.zoom,
-                                        blend_radius: settings.blend_radius,
-                                        smooth_lighting: settings.smooth_lighting,
-                                        cutout_leaves: settings.cutout_leaves,
-                                        assets: &context.assets,
-                                        render: &context.render,
-                                        tables: &context.tables,
-                                        biomes: &context.biomes,
-                                        visibility,
-                                    };
-                                    let mut mesh = mesher.mesh(&borrow(&region), sy);
-                                    mesh.sort_solid();
-                                    faces = Some((context.tables.clone(), mesher.visibility));
-                                    Done::Meshed(x, sy, z, mesh, seq)
-                                }
-                            };
-                            if send.send(done).is_err() {
+                        while let Some(job) = worker.next_job() {
+                            let done = worker.run(job);
+                            if worker.send.send(done).is_err() {
                                 return;
                             }
                         }
@@ -549,6 +600,18 @@ impl Streaming {
                     .expect("spawn worker")
             })
             .collect();
+        // The browser build (docs/web.md) has no threads: one worker runs
+        // queued jobs on the game's thread, between frames (`pump`).
+        let inline: Option<Box<dyn Pump>> = cfg!(target_arch = "wasm32").then(|| {
+            Box::new(Worker {
+                shared: shared.clone(),
+                send: send.clone(),
+                generator: generator.clone(),
+                light: context.light.clone(),
+                worker: generator.worker(),
+                faces: None,
+            }) as Box<dyn Pump>
+        });
         let light_view = {
             let generator = generator.clone();
             Arc::new(move |p: &Proto| generator.light_view(p))
@@ -558,6 +621,7 @@ impl Streaming {
             light_view,
             results,
             threads,
+            inline,
             order: 0,
             scan_age: 0,
             scan_area: ((i32::MIN, i32::MIN), i32::MIN),
@@ -909,6 +973,7 @@ impl Streaming {
         self.requeue();
         self.relight_edits(world);
         let deferred = std::mem::take(&mut self.deferred);
+        self.pump(web_pump_budget());
         let received = std::iter::from_fn(|| self.results.try_recv().ok());
         for done in deferred.into_iter().chain(received.collect::<Vec<_>>()) {
             match done {
@@ -1418,7 +1483,7 @@ impl Streaming {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while self.decorating > 0 || !self.finishing.is_empty() || self.saving > 0 {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
-            match self.results.recv_timeout(left) {
+            match self.recv_for(left) {
                 Ok(Done::Decorated(x, z, region)) => self.receive_decorated(x, z, *region),
                 Ok(Done::Generated(chunk)) => self.receive_generated(chunk, world),
                 Ok(Done::Saved(protos)) => self.receive_saved(protos),
@@ -1444,6 +1509,7 @@ impl Streaming {
     /// Proto snapshots are checked out to workers before chunk writes, just as
     /// in `save(true)`, so older generation cannot overwrite the final chunks.
     pub fn poll_save(&mut self, world: &mut World) -> bool {
+        self.pump(web_pump_budget());
         let started = std::time::Instant::now();
         while let Ok(done) = self.results.try_recv() {
             match done {
@@ -1527,10 +1593,35 @@ impl Streaming {
         }
         counts
     }
+    /// The browser build (docs/web.md): runs queued jobs on this thread for
+    /// up to `budget` (a frame's share); nothing on native, where workers do.
+    pub fn pump(&mut self, budget: std::time::Duration) {
+        if let Some(inline) = self.inline.as_mut() {
+            inline.pump(budget);
+        }
+    }
+    /// `results.recv_timeout`, running jobs here meanwhile in the browser build.
+    fn recv_for(&mut self, timeout: std::time::Duration) -> Result<Done, mpsc::RecvTimeoutError> {
+        let Some(inline) = self.inline.as_mut() else {
+            return self.results.recv_timeout(timeout);
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Ok(done) = self.results.try_recv() {
+                return Ok(done);
+            }
+            if !inline.pump(std::time::Duration::ZERO) || std::time::Instant::now() >= deadline {
+                return self
+                    .results
+                    .try_recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Timeout);
+            }
+        }
+    }
     /// Wait up to `timeout` for a worker to finish a job; the next `update`
     /// takes it. A server pumps generation with this between its ticks.
     pub fn wait(&mut self, timeout: std::time::Duration) {
-        if let Ok(done) = self.results.recv_timeout(timeout) {
+        if let Ok(done) = self.recv_for(timeout) {
             self.deferred.push(done);
         }
     }
@@ -1811,7 +1902,7 @@ impl Drop for Streaming {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while self.saving > 0 {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
-            match self.results.recv_timeout(left) {
+            match self.recv_for(left) {
                 Ok(Done::Saved(_)) => self.saving -= 1,
                 Ok(_) => {}
                 Err(_) => break,

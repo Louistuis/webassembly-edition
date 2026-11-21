@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horizon</title>
+<script>Error.stackTraceLimit = 200;</script>
+<script type="importmap">{ "imports": { "horizon_std": "./std.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body > canvas { position: fixed; inset: 0; width: 100vw !important; height: 100vh !important; display: block; outline: none; }
+  #boot { position: fixed; inset: 0; display: grid; place-content: center; gap: 14px; justify-items: center;
+          background: #1b1b1b; color: #ddd; font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; z-index: 2; }
+  #boot[hidden] { display: none; }
+  #boot h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0; color: #fff; }
+  #boot .track { width: min(360px, 80vw); height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+  #boot-bar { width: 0; height: 100%; background: #6dbb3f; transition: width .15s; }
+  #boot-status { max-width: min(560px, 90vw); text-align: center; color: #aaa; min-height: 1.3em; }
+  #boot.failed #boot-status { color: #ff8a80; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="boot">
+  <h1>Horizon</h1>
+  <div class="track"><div id="boot-bar"></div></div>
+  <div id="boot-status">Starting</div>
+</div>
+<script type="module" src="./boot.js"></script>
+</body>
+</html>

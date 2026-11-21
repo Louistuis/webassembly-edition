@@ -12655,6 +12655,10 @@ impl ApplicationHandler for Game<'_> {
         let attributes = Window::default_attributes()
             .with_title("Horizon")
             .with_window_icon(horizon_client::window::icon());
+        // The browser build: the window is a canvas the page sizes (docs/web.md).
+        #[cfg(target_arch = "wasm32")]
+        let attributes =
+            winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
@@ -13642,9 +13646,8 @@ impl ApplicationHandler for Game<'_> {
                         window.request_redraw();
                     }
                     // Yield between polls even when disk I/O is slow.
-                    event_loop.set_control_flow(ControlFlow::wait_duration(
-                        Duration::from_millis(4),
-                    ));
+                    event_loop
+                        .set_control_flow(ControlFlow::wait_duration(Duration::from_millis(4)));
                 }
                 Err(error) => {
                     self.error = Some(error);
@@ -15112,6 +15115,10 @@ impl Loading {
         let attributes = Window::default_attributes()
             .with_title("Horizon")
             .with_window_icon(horizon_client::window::icon());
+        // The browser build: the window is a canvas the page sizes (docs/web.md).
+        #[cfg(target_arch = "wasm32")]
+        let attributes =
+            winit::platform::web::WindowAttributesExtWebSys::with_append(attributes, true);
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
@@ -15542,6 +15549,67 @@ pub fn run() -> Result<()> {
     )?;
     if let Some(game) = game {
         run_event_loop(game)?;
+    }
+    Ok(())
+}
+
+/// The browser build (docs/web.md): `run`'s synchronous start-up on a page.
+/// WebGPU's device is opened first (a page cannot block on it), single
+/// player's world runs in the frame (a page has no threads), and the game
+/// then lives on the page's event loop.
+#[cfg(target_arch = "wasm32")]
+pub async fn run_web() -> Result<()> {
+    use winit::platform::web::EventLoopExtWebSys;
+    horizon_client::gfx::web_open_gpu().await?;
+    let Some(mut options) = Options::read()? else {
+        return Ok(());
+    };
+    options.server_thread = false;
+    let started = Instant::now();
+    let vanilla_root = options.resources.clone();
+    let early_settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
+    Behaviours::set_cache_dir(std::env::current_dir()?.join(".horizon-cache"));
+    let mut pack_error = None;
+    options.resources = packs::startup_root(&vanilla_root, &early_settings.resource_packs, &[])
+        .unwrap_or_else(|e| {
+            log::warn!("Horizon: resource packs not applied: {e}");
+            pack_error = Some(e.to_string());
+            vanilla_root.clone()
+        });
+    options.resources = mods::content_root(
+        &options.resources,
+        &early_settings.mods.enabled,
+        &options.dev_mods,
+    );
+    let loaded = load_resources(
+        options.resources.clone(),
+        &vanilla_root,
+        &early_settings,
+        started,
+        false,
+        &Progress::new(),
+        &mut |_, _| {},
+    )?;
+    let gui = loaded.gui.ok_or("missing menu bundle")?;
+    options.resources = loaded.root.clone();
+    let audio = Audio::new(&options.resources);
+    // The game borrows its resources for the page's lifetime.
+    let resources: &'static Arc<Resources> = Box::leak(Box::new(loaded.resources));
+    let game = start_game(
+        resources,
+        loaded.pack,
+        gui,
+        options,
+        loaded.pack_error.or(pack_error),
+        audio,
+        vanilla_root,
+        started,
+        loaded.rest_loader,
+        None,
+        None,
+    )?;
+    if let Some(game) = game {
+        EventLoop::new()?.spawn_app(game);
     }
     Ok(())
 }

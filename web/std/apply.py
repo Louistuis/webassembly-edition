@@ -42,6 +42,7 @@ def main():
     shutil.copy(HERE / "sys/time.rs", sysdir / "time/unsupported.rs")
     shutil.copy(HERE / "sys/env.rs", sysdir / "env/unsupported.rs")
     shutil.copy(HERE / "sys/fs.rs", sysdir / "fs/unsupported.rs")
+    shutil.copy(HERE / "sys/args.rs", sysdir / "args/unsupported.rs")
 
     # stdout and stderr: whole lines to the page's console.
     edit(sysdir / "stdio/unsupported.rs",
@@ -92,10 +93,41 @@ impl io::Write for Stdout {
     while crate::sys::horizon_web::now() < end {}
 }""")
 
+    # Scoped threads (parallel work the caller waits for) run on the calling
+    # thread, at spawn; plain threads still fail to spawn (the game handles each).
+    edit(sysdir / "thread/unsupported.rs",
+         "pub struct Thread(!);",
+         "pub struct Thread(());\n\nimpl Thread {\n    /// A scoped thread that already ran on the calling thread.\n    pub fn finished() -> Thread {\n        Thread(())\n    }\n}")
+    edit(sysdir / "thread/unsupported.rs",
+         "    pub fn join(self) {\n        self.0\n    }",
+         "    pub fn join(self) {}")
+    edit(lib / "std/src/thread/lifecycle.rs",
+         "    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });\n",
+         """    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });
+
+    // Horizon's browser build: no threads, so a scoped thread's work runs
+    // here, now; the scope then finds it finished.
+    #[cfg(all(target_family = "wasm", target_os = "unknown", not(target_feature = "atomics")))]
+    if my_packet.scope.is_some() {
+        let ThreadInit { rust_start, .. } = *init;
+        rust_start();
+        return Ok(JoinInner { native: imp::Thread::finished(), thread, packet: my_packet });
+    }
+""")
+
     # The working directory the in-memory file system resolves relative paths against.
     edit(sysdir / "paths/unsupported.rs",
          "pub fn getcwd() -> io::Result<PathBuf> {\n    unsupported()\n}",
          "pub fn getcwd() -> io::Result<PathBuf> {\n    Ok(PathBuf::from(crate::sys::fs::CWD))\n}")
+    edit(sysdir / "paths/unsupported.rs",
+         "pub fn current_exe() -> io::Result<PathBuf> {\n    unsupported()\n}",
+         'pub fn current_exe() -> io::Result<PathBuf> {\n    Ok(PathBuf::from("/horizon/horizon-client"))\n}')
+    edit(sysdir / "paths/unsupported.rs",
+         'pub fn temp_dir() -> PathBuf {\n    panic!("no filesystem on this platform")\n}',
+         'pub fn temp_dir() -> PathBuf {\n    PathBuf::from("/tmp")\n}')
+    edit(sysdir / "paths/unsupported.rs",
+         "pub fn home_dir() -> Option<PathBuf> {\n    None\n}",
+         'pub fn home_dir() -> Option<PathBuf> {\n    Some(PathBuf::from(crate::sys::fs::CWD))\n}')
     edit(sysdir / "fs/mod.rs",
          "    _ => {\n        mod unsupported;\n        use unsupported as imp;\n    }",
          "    _ => {\n        mod unsupported;\n        use unsupported as imp;\n        pub use unsupported::CWD;\n    }")

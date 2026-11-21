@@ -76,11 +76,17 @@ fn tree() -> MutexGuard<'static, Option<Tree>> {
         let now = SystemTime::now();
         tree.nodes.insert(String::from("/"), Node::Dir { modified: now });
         tree.mkdirs(CWD, now);
+        tree.mkdirs("/tmp", now);
         let manifest = horizon_web::manifest();
         for line in manifest.split(|b| *b == b'\n') {
             let Ok(line) = crate::str::from_utf8(line) else { continue };
             let Some((path, size)) = line.split_once('\t') else { continue };
             let key = key(Path::new(path));
+            // A folder (one the game made, kept by the page) ends with a separator.
+            if path.ends_with('/') {
+                tree.mkdirs(&key, now);
+                continue;
+            }
             if key == "/" {
                 continue;
             }

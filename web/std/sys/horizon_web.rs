@@ -11,6 +11,10 @@ unsafe extern "C" {
     fn epoch_ms() -> f64;
     /// One line of stdout (`level` 1) or stderr (2) for the console.
     fn console(level: u32, ptr: *const u8, len: usize);
+    /// The game's command line, arguments separated by NUL: its length.
+    fn args_len() -> usize;
+    /// Copies the command line into `dst`.
+    fn args_copy(dst: *mut u8);
     /// The game files the page holds, as `path\tsize\n` lines: their length.
     fn fs_manifest_len() -> usize;
     /// Copies the manifest into `dst`.
@@ -33,6 +37,18 @@ pub fn epoch() -> f64 {
 }
 pub fn log(level: u32, text: &[u8]) {
     unsafe { console(level, text.as_ptr(), text.len()) }
+}
+pub fn args() -> crate::vec::Vec<crate::string::String> {
+    let len = unsafe { args_len() };
+    let mut out = crate::vec::Vec::with_capacity(len);
+    unsafe {
+        args_copy(out.as_mut_ptr());
+        out.set_len(len);
+    }
+    out.split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| crate::string::String::from_utf8_lossy(a).into_owned())
+        .collect()
 }
 pub fn manifest() -> crate::vec::Vec<u8> {
     let len = unsafe { fs_manifest_len() };

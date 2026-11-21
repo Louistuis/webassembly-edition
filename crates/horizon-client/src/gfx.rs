@@ -786,6 +786,10 @@ fn instance_descriptor(backends: wgpu::Backends) -> wgpu::InstanceDescriptor {
 /// the renderer's start (#746). macOS has Metal only.
 fn backend_order(api: GraphicsApi, os: &str, wgpu_backend: bool) -> Vec<wgpu::Backends> {
     use wgpu::Backends;
+    // The browser build (docs/web.md): the page's WebGPU.
+    if cfg!(target_arch = "wasm32") {
+        return vec![Backends::BROWSER_WEBGPU];
+    }
     if os == "macos" || wgpu_backend {
         return vec![Backends::default()];
     }
@@ -813,6 +817,27 @@ struct Opened {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+}
+/// An error scope's error. Native builds wait for it; the browser build
+/// (docs/web.md) cannot wait on the page's promise, so it takes the error
+/// only when it is already known and carries on otherwise (the page's
+/// console still reports a real one).
+pub(crate) fn scope_error(
+    pop: impl std::future::Future<Output = Option<wgpu::Error>>,
+) -> Option<wgpu::Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        pollster::block_on(pop)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut pop = std::pin::pin!(pop);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match pop.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(error) => error,
+            std::task::Poll::Pending => None,
+        }
+    }
 }
 /// Logs the adapter and records it for telemetry and crash reports.
 fn describe_adapter(adapter: &wgpu::Adapter) {
@@ -879,6 +904,51 @@ async fn open_device(
     api: GraphicsApi,
     layers: u32,
 ) -> Result<Opened> {
+    // The browser build: the device `web_open_gpu` opened before the game started.
+    #[cfg(target_arch = "wasm32")]
+    if let Some((instance, adapter, device, queue)) = WEB_GPU.with(|gpu| gpu.borrow().clone()) {
+        check_layers(&adapter.limits(), layers)?;
+        let surface = if offscreen {
+            None
+        } else {
+            Some(instance.create_surface(window.clone())?)
+        };
+        return Ok(Opened {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+        });
+    }
+    open_device_on(Some(window), offscreen, api, layers).await
+}
+
+// The browser build (docs/web.md): a page cannot block on WebGPU's adapter
+// and device, so the page's start-up opens them here, before the game, and
+// every renderer shares them (`open_device`).
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WEB_GPU: std::cell::RefCell<Option<(wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Opens the page's WebGPU device for the renderer to take (see `WEB_GPU`).
+#[cfg(target_arch = "wasm32")]
+pub async fn web_open_gpu() -> Result<()> {
+    let opened = open_device_on(None, true, GraphicsApi::Auto, 1).await?;
+    WEB_GPU.with(|gpu| {
+        *gpu.borrow_mut() = Some((opened.instance, opened.adapter, opened.device, opened.queue))
+    });
+    Ok(())
+}
+
+async fn open_device_on(
+    window: Option<&Arc<Window>>,
+    offscreen: bool,
+    api: GraphicsApi,
+    layers: u32,
+) -> Result<Opened> {
     let order = backend_order(
         api.with_env(),
         std::env::consts::OS,
@@ -893,7 +963,7 @@ async fn open_device(
         let instance = wgpu::Instance::new(instance_descriptor(backends));
         let surface = if offscreen {
             None
-        } else {
+        } else if let Some(window) = window {
             match instance.create_surface(window.clone()) {
                 Ok(surface) => Some(surface),
                 Err(e) => {
@@ -901,6 +971,8 @@ async fn open_device(
                     continue;
                 }
             }
+        } else {
+            None
         };
         let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {

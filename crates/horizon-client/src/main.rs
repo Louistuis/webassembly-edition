@@ -1,7 +1,9 @@
 //! Horizon: native Rust client for Minecraft Java Edition 26.3 gameplay.
-#![forbid(unsafe_code)]
+// The browser build exports its start function (wasm-bindgen generates the export).
+#![cfg_attr(not(target_arch = "wasm32"), forbid(unsafe_code))]
 mod game;
 
+#[cfg(not(target_arch = "wasm32"))]
 use horizon_client::{crash, logging};
 
 /// The mod API level this game serves, kept in the program for the launcher
@@ -9,6 +11,35 @@ use horizon_client::{crash, logging};
 /// reads it, so the linker keeps it.
 static MOD_API_LEVEL: [u8; 27] = horizon_mods::api_level::MARK;
 
+/// The browser build (docs/web.md): the page calls `horizon_start` once its
+/// files and the wasm memory are in place; wasm-bindgen runs `main` earlier,
+/// while the module is still being set up, so it does nothing there.
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    let _ = &MOD_API_LEVEL;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    /// The page's error screen (web/page/boot.js).
+    #[wasm_bindgen(js_namespace = horizon, js_name = fail)]
+    fn page_fail(message: &str);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn horizon_start() {
+    horizon_client::web::init();
+    wasm_bindgen_futures::spawn_local(async {
+        if let Err(error) = game::run_web().await {
+            log::error!("Horizon: {error}");
+            page_fail(&error.to_string());
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     std::hint::black_box(&MOD_API_LEVEL);
     horizon_client::telemetry::mark_start();

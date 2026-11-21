@@ -480,7 +480,7 @@ fn sampler(
 fn checked<T>(device: &wgpu::Device, create: impl FnOnce() -> T) -> Result<T, String> {
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let value = create();
-    match pollster::block_on(scope.pop()) {
+    match crate::gfx::scope_error(scope.pop()) {
         Some(e) => {
             // The details are in the error's description or its sources.
             let mut message = match &e {
