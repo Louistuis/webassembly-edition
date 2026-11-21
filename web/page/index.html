@@ -3,28 +3,50 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Horizon</title>
+<title>Horizon Browser Edition</title>
 <script>Error.stackTraceLimit = 200;</script>
 <script type="importmap">{ "imports": { "horizon_std": "./std.js" } }</script>
-<style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body > canvas { position: fixed; inset: 0; width: 100vw !important; height: 100vh !important; display: block; outline: none; }
-  #boot { position: fixed; inset: 0; display: grid; place-content: center; gap: 14px; justify-items: center;
-          background: #1b1b1b; color: #ddd; font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; z-index: 2; }
-  #boot[hidden] { display: none; }
-  #boot h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0; color: #fff; }
-  #boot .track { width: min(360px, 80vw); height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
-  #boot-bar { width: 0; height: 100%; background: #6dbb3f; transition: width .15s; }
-  #boot-status { max-width: min(560px, 90vw); text-align: center; color: #aaa; min-height: 1.3em; }
-  #boot.failed #boot-status { color: #ff8a80; white-space: pre-wrap; }
-</style>
+<link rel="stylesheet" href="./start.css">
 </head>
 <body>
-<div id="boot">
-  <h1>Horizon</h1>
-  <div class="track"><div id="boot-bar"></div></div>
-  <div id="boot-status">Starting</div>
-</div>
+<main id="boot" aria-live="polite">
+  <div class="sky" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <section class="card">
+    <header>
+      <h1 class="wordmark">Horizon</h1>
+      <p class="edition">Browser Edition</p>
+    </header>
+    <p class="credit">Brought to you by <b>Louis</b>. Built from the open Horizon project.</p>
+
+    <div class="who" id="who" hidden>
+      <span class="avatar" id="who-avatar" aria-hidden="true"></span>
+      <span>Playing as <b id="who-name"></b></span>
+    </div>
+
+    <div class="start" id="start">
+      <button class="block face" id="play" type="button">Play</button>
+      <div class="setting" role="radiogroup" aria-label="View distance">
+        <span class="label">View distance</span>
+        <div class="segments" id="distance">
+          <button type="button" data-v="4">4</button>
+          <button type="button" data-v="6">6</button>
+          <button type="button" data-v="8">8</button>
+          <button type="button" data-v="10">10</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="track"><div id="boot-bar"></div></div>
+      <p id="boot-status">Getting the game files ready</p>
+    </div>
+
+    <footer>
+      The real Horizon client, compiled to WebAssembly, rendering with WebGPU.
+      Worlds are kept in this browser. Works best in a current Chrome, Edge or Safari.
+    </footer>
+  </section>
+</main>
 <script type="module" src="./boot.js"></script>
 </body>
 </html>

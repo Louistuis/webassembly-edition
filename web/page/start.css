@@ -1,0 +1,111 @@
+/* The start screen of Horizon Browser Edition. Colours, type and the block
+   buttons follow Horizon's own design tokens (crates/horizon-theme/tokens.css,
+   docs/design-system.md), dark palette. */
+@font-face { font-family: "Pixelify Sans"; src: url(./fonts/PixelifySans-SemiBold.ttf) format("truetype"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Geist"; src: url(./fonts/Geist-Regular.ttf) format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Geist"; src: url(./fonts/Geist-Medium.ttf) format("truetype"); font-weight: 500; font-display: swap; }
+
+:root {
+  --page: #0f0d17;
+  --panel: #1a1727;
+  --ink: #ecedf3;
+  --ink-soft: #c5c7d1;
+  --muted: #9893ad;
+  --accent: #9a86ff;
+  --button: #2b2641;
+  --button-bevel: #3d3560;
+  --lip: #07060b;
+  --outline: #05040a;
+  --face: #5b3fd6;
+  --face-bevel: #8a74ff;
+  --face-lip: #3a2694;
+  --danger: #ff8a80;
+  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --pixel: "Pixelify Sans", "Geist", -apple-system, sans-serif;
+  color-scheme: dark;
+}
+
+html, body { margin: 0; height: 100%; background: var(--page); overflow: hidden; }
+body > canvas { position: fixed; inset: 0; width: 100vw !important; height: 100vh !important; display: block; outline: none; }
+
+#boot {
+  position: fixed; inset: 0; z-index: 2;
+  display: grid; place-items: center; padding: 16px;
+  background: linear-gradient(180deg, #1d1838 0%, #2c2452 46%, #5a3f7a 78%, #c07a6a 100%);
+  color: var(--ink); font: 400 15px/1.5 var(--font);
+  transition: opacity .35s ease;
+}
+#boot.gone { opacity: 0; pointer-events: none; }
+#boot[hidden] { display: none; }
+
+/* Slow pixel clouds drifting behind the card. */
+.sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.sky i {
+  position: absolute; display: block; height: 16px; background: rgba(255, 255, 255, .07);
+  box-shadow: 16px -16px 0 rgba(255, 255, 255, .07), 48px -16px 0 rgba(255, 255, 255, .07);
+  animation: drift linear infinite;
+}
+.sky i:nth-child(1) { top: 14%; width: 160px; animation-duration: 90s; animation-delay: -10s; }
+.sky i:nth-child(2) { top: 26%; width: 96px;  animation-duration: 120s; animation-delay: -70s; }
+.sky i:nth-child(3) { top: 38%; width: 224px; animation-duration: 140s; animation-delay: -30s; }
+.sky i:nth-child(4) { top: 58%; width: 128px; animation-duration: 110s; animation-delay: -90s; }
+.sky i:nth-child(5) { top: 70%; width: 192px; animation-duration: 160s; animation-delay: -50s; }
+.sky i:nth-child(6) { top: 84%; width: 112px; animation-duration: 100s; animation-delay: -20s; }
+@keyframes drift { from { transform: translateX(-260px); } to { transform: translateX(calc(100vw + 260px)); } }
+
+.card {
+  position: relative; width: min(420px, 100%); box-sizing: border-box;
+  padding: 28px 28px 22px; display: grid; gap: 18px;
+  background: var(--panel); border: 2px solid var(--outline);
+  box-shadow: inset 0 2px 0 var(--button-bevel), 0 4px 0 var(--lip), 0 24px 60px rgba(0, 0, 0, .45);
+}
+header { display: grid; gap: 2px; }
+.wordmark {
+  margin: 0; font: 600 clamp(44px, 12vw, 60px)/0.9 var(--pixel); letter-spacing: 0;
+  color: #fff; text-shadow: 0 4px 0 var(--face-lip);
+}
+.edition { margin: 0; font: 600 18px/1.2 var(--pixel); color: var(--accent); letter-spacing: .02em; }
+.credit { margin: 0; color: var(--ink-soft); }
+.credit b { color: var(--ink); font-weight: 500; }
+
+.who { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 14px; }
+.who[hidden] { display: none; }
+.who b { color: var(--ink); font-weight: 500; }
+.avatar { width: 28px; height: 28px; background: var(--button) center/cover no-repeat; border: 2px solid var(--outline); image-rendering: pixelated; }
+
+.start { display: grid; gap: 14px; }
+.block {
+  appearance: none; cursor: pointer; font: 600 20px/1 var(--pixel); letter-spacing: .02em;
+  padding: 14px 18px 16px; border: 2px solid var(--outline); color: #fff;
+  background: var(--face);
+  box-shadow: inset 0 2px 0 var(--face-bevel), inset 0 -4px 0 var(--face-lip);
+  transition: transform .08s ease, filter .12s ease;
+}
+.block:hover { filter: brightness(1.08); }
+.block:active { transform: translateY(2px); box-shadow: inset 0 2px 0 var(--face-bevel), inset 0 -2px 0 var(--face-lip); }
+.block:focus-visible, .segments button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.block:disabled { cursor: default; filter: saturate(.4) brightness(.8); }
+
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.label { color: var(--muted); font-size: 13px; }
+.segments { display: flex; border: 2px solid var(--outline); background: var(--lip); }
+.segments button {
+  appearance: none; cursor: pointer; min-width: 42px; padding: 6px 0 7px; border: 0;
+  font: 500 14px/1 var(--font); color: var(--ink-soft); background: var(--button);
+  box-shadow: inset 0 2px 0 var(--button-bevel);
+}
+.segments button + button { border-left: 2px solid var(--outline); }
+.segments button[aria-checked="true"] { color: #fff; background: var(--face); box-shadow: inset 0 2px 0 var(--face-bevel); }
+
+.loading { display: none; gap: 10px; }
+#boot.playing .start { display: none; }
+#boot.playing .loading, #boot.failed .loading { display: grid; }
+.track { height: 12px; border: 2px solid var(--outline); background: var(--lip); }
+#boot-bar { width: 0; height: 100%; background: var(--face); box-shadow: inset 0 2px 0 var(--face-bevel); transition: width .2s ease; }
+#boot-status { margin: 0; min-height: 1.5em; color: var(--ink-soft); font-size: 14px; overflow-wrap: anywhere; }
+#boot.failed #boot-status { color: var(--danger); white-space: pre-wrap; }
+#boot.failed .start { display: none; }
+
+footer { color: var(--muted); font-size: 12px; line-height: 1.5; border-top: 2px solid var(--outline); padding-top: 14px; }
+
+@media (prefers-reduced-motion: reduce) { .sky i { animation: none; } .block, #boot { transition: none; } }

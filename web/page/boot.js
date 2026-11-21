@@ -128,11 +128,14 @@ globalThis.horizon = {
   lines,
   fail(message) {
     screen.hidden = false;
+    screen.classList.remove('gone');
     screen.classList.add('failed');
     status.textContent = message;
   },
   log(line) {
-    if (!screen.hidden && !screen.classList.contains('failed')) status.textContent = line.replace(/^\[\w+\] /, '');
+    if (screen.classList.contains('playing') && !screen.classList.contains('failed')) {
+      status.textContent = line.replace(/^\[\w+\] /, '');
+    }
   },
   state,
 };
@@ -211,8 +214,7 @@ async function fetchChunk(chunk, onBytes) {
   return new Uint8Array(await new Response(raw).arrayBuffer());
 }
 
-async function loadResources() {
-  const index = await (await fetch(new URL('index.json', PACK))).json();
+async function loadResources(index) {
   const core = index.chunks.core;
   const total = core.reduce((n, c) => n + c.size, 0);
   let done = 0;
@@ -232,10 +234,73 @@ async function loadResources() {
   return { index, sounds };
 }
 
-async function main() {
+// ---- the start screen ----
+const playButton = document.getElementById('play');
+const distance = document.getElementById('distance');
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* private window */ } },
+};
+let viewDistance = Number(store.get('horizon.viewDistance')) || 6;
+function showDistance() {
+  for (const b of distance.querySelectorAll('button')) {
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(Number(b.dataset.v) === viewDistance));
+  }
+}
+distance.addEventListener('click', (e) => {
+  const v = Number(e.target?.dataset?.v);
+  if (!v) return;
+  viewDistance = v;
+  store.set('horizon.viewDistance', String(v));
+  showDistance();
+});
+showDistance();
+
+// The player's name: their WebSim name inside WebSim (letters, digits and _ only, as the game allows).
+async function player() {
+  try {
+    const user = await globalThis.websim?.getCurrentUser?.();
+    if (user?.username) {
+      const name = user.username.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 16).padEnd(3, '_');
+      document.getElementById('who-name').textContent = name;
+      const avatar = user.avatar_url || user.avatarUrl;
+      if (avatar) document.getElementById('who-avatar').style.backgroundImage = `url("${avatar}")`;
+      document.getElementById('who').hidden = false;
+      return name;
+    }
+  } catch { /* outside WebSim */ }
+  return null;
+}
+
+// The chosen view distance goes into the game's own options.txt, the file its
+// Options screen reads and writes.
+const OPTIONS = '/horizon/options.txt';
+function setViewDistance(v) {
+  const old = state.files.get(OPTIONS);
+  let text = old instanceof Uint8Array ? new TextDecoder().decode(old) : '';
+  for (const key of ['renderDistance', 'simulationDistance']) {
+    const line = `${key}:${key === 'simulationDistance' ? Math.min(v, 8) : v}`;
+    text = new RegExp(`^${key}:.*$`, 'm').test(text) ? text.replace(new RegExp(`^${key}:.*$`, 'm'), line) : `${text}${line}\n`;
+  }
+  state.files.set(OPTIONS, new TextEncoder().encode(text));
+}
+
+async function prepare() {
   if (!navigator.gpu) {
     throw new Error('This browser has no WebGPU. Use a current Chrome, Edge or Safari.');
   }
+  const index = await (await fetch(new URL('index.json', PACK))).json();
+  // The game's code compiles while the files load. Published copies keep it
+  // gzipped (`wasm` in the index, web/publish.sh).
+  const module = (async () => {
+    if (!index.wasm) return WebAssembly.compileStreaming(fetch(new URL('horizon_bg.wasm', import.meta.url)));
+    const response = await fetch(new URL(index.wasm, import.meta.url));
+    if (!response.ok) throw new Error(`${index.wasm}: ${response.status}`);
+    const body = response.body.pipeThrough(new DecompressionStream('gzip'));
+    return WebAssembly.compileStreaming(new Response(body, { headers: { 'content-type': 'application/wasm' } }));
+  })();
+  module.catch(() => {});
   let db = null;
   try {
     db = await openStore();
@@ -245,20 +310,40 @@ async function main() {
   } catch (e) {
     console.warn('Horizon: no browser storage, worlds will not be kept', e);
   }
-  await loadResources();
+  await loadResources(index);
   status.textContent = 'Starting Horizon';
-  // The page's defaults: a modest view distance (the game's memory is capped at 2 GiB).
-  // `?args=--world T --creative` (tests) replaces the defaults.
+  return module;
+}
+
+async function main() {
+  // Everything that does not need the click starts at once, so Play is quick.
+  const ready = prepare();
+  const name = await player();
   const urlArgs = new URLSearchParams(location.search).get('args');
-  state.args = urlArgs ? urlArgs.split(' ').filter(Boolean)
-    : (globalThis.HORIZON_ARGS || ['--render-distance', '6']).slice();
-  const wasm = await init({ module_or_path: new URL('horizon_bg.wasm', import.meta.url) });
+  if (urlArgs === null) {
+    await new Promise((resolve) => playButton.addEventListener('click', resolve, { once: true }));
+  }
+  screen.classList.add('playing');
+  const module = await ready;
+  if (urlArgs !== null) {
+    // Tests: `?args=--world T --creative` replaces the page's own arguments.
+    state.args = urlArgs.split(' ').filter(Boolean);
+  } else {
+    setViewDistance(viewDistance);
+    state.args = name ? ['--name', name] : [];
+  }
+  const wasm = await init({ module_or_path: module });
   state.memory = wasm.memory;
-  // The loading screen gives way once the game's canvas is on the page.
+  // The start screen gives way once the game's canvas is on the page.
   new MutationObserver((_, observer) => {
     if (document.querySelector('body > canvas')) {
       observer.disconnect();
-      setTimeout(() => { if (!screen.classList.contains('failed')) screen.hidden = true; }, 300);
+      setTimeout(() => {
+        if (screen.classList.contains('failed')) return;
+        screen.classList.add('gone');
+        setTimeout(() => { if (!screen.classList.contains('failed')) screen.hidden = true; }, 400);
+        document.querySelector('body > canvas').focus();
+      }, 300);
     }
   }).observe(document.body, { childList: true });
   horizon_start();

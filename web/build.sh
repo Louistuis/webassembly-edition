@@ -28,5 +28,5 @@ RUSTC_BOOTSTRAP=1 __CARGO_TESTS_ONLY_SRC_ROOT="$HORIZON_WEB_STD/library" \
 mkdir -p web/dist
 wasm-bindgen --target web --no-typescript --out-dir web/dist --out-name horizon \
   "$CARGO_TARGET_DIR/wasm32-unknown-unknown/$PROFILE/horizon-client.wasm"
-cp web/page/* web/dist/
+cp -R web/page/. web/dist/
 ls -la web/dist
