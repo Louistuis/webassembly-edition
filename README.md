@@ -71,7 +71,7 @@ headless (`web/test/`), away from a small machine's GPU.
 - **[Horizon](https://github.com/horizon-rust/horizon)** by Ludovic Marie and the Horizon contributors: the game
   client underneath all of it, MIT licensed. Everything outside `web/` and the `wasm32` paths is theirs; their
   own documentation is still in `docs/`.
-- Fonts: Pixelify Sans, Comic Neue and Geist (SIL Open Font License); third-party code in
+- Fonts: Pixelify Sans and Comic Neue (SIL Open Font License); third-party code in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 MIT licensed, see [LICENSE](LICENSE).

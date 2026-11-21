@@ -1,5 +1,6 @@
 // The published copy end to end: opens URL, enters the access key (ACCESS_KEY
-// env) when asked, presses Play, waits for the game, saves OUT-canvas.png.
+// env) when asked, presses Play if the page asks, waits for the game, saves
+// OUT-canvas.png.
 //   node test/live.mjs URL OUT [seconds]
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -22,8 +23,16 @@ if (await frame.locator('#key-input').isVisible().catch(() => false)) {
   await frame.click('#key button');
   console.log('key entered');
 }
-await frame.waitForSelector('#play', { state: 'visible', timeout: 30000 });
-await frame.click('#play');
+// The page starts the game by itself when it needs nothing more; otherwise Play.
+for (let i = 0; i < 30; i++) {
+  if (await frame.evaluate(() => Boolean(globalThis.horizon?.lines?.length)).catch(() => false)) break;
+  if (await frame.locator('#play').isVisible().catch(() => false)) {
+    await frame.click('#play');
+    console.log('pressed Play');
+    break;
+  }
+  await page.waitForTimeout(1000);
+}
 const deadline = Date.now() + Number(seconds) * 1000;
 let state = {};
 while (Date.now() < deadline) {
