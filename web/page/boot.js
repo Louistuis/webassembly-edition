@@ -279,7 +279,9 @@ async function player() {
       const name = user.username.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 16).padEnd(3, '_');
       document.getElementById('who-name').textContent = name;
       const avatar = user.avatar_url || user.avatarUrl;
-      if (avatar) document.getElementById('who-avatar').style.backgroundImage = `url("${avatar}")`;
+      if (typeof avatar === 'string' && /^https:\/\/[^"'()\\\s]+$/.test(avatar)) {
+        document.getElementById('who-avatar').style.backgroundImage = `url("${avatar}")`;
+      }
       document.getElementById('who').hidden = false;
       return name;
     }
@@ -379,10 +381,13 @@ async function main() {
   const wasm = await init({ module_or_path: module });
   state.memory = wasm.memory;
   useExports(wasm);
-  startNet(game);
-  // Tests drive the game with its agent-control commands (docs/agent-control.md).
-  globalThis.horizon.command = game.horizon_command;
-  globalThis.horizon.replies = game.horizon_replies;
+  startNet(game, accessKey);
+  // Tests drive the game with its agent-control commands (docs/agent-control.md);
+  // only test runs (`?args=`) get them, so nothing else on the page can.
+  if (urlArgs !== null) {
+    globalThis.horizon.command = game.horizon_command;
+    globalThis.horizon.replies = game.horizon_replies;
+  }
   // The start screen gives way once the game's canvas is on the page.
   new MutationObserver((_, observer) => {
     if (document.querySelector('body > canvas')) {

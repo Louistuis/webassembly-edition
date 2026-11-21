@@ -64,6 +64,9 @@ pub struct Guest {
     /// The hub tick of the player's last action (ServerPlayer.lastActionTime),
     /// for player-idle-timeout.
     pub last_action_tick: u64,
+    /// ServerGamePacketListenerImpl.chatSpamThrottler (TickThrottler(20, 200)):
+    /// the count and the hub tick it was last brought down to.
+    pub chat_spam: (u64, u64),
     /// The next ClientboundPlayerChatPacket.globalIndex for this connection.
     pub chat_index: i32,
     /// Secure chat (ServerGamePacketListenerImpl): the player's message
@@ -267,6 +270,7 @@ impl Guest {
             conn: j.conn,
             address: j.address,
             last_action_tick: 0,
+            chat_spam: (0, 0),
             chat_index: 0,
             chain: Default::default(),
             last_seen: Default::default(),

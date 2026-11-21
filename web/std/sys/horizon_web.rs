@@ -169,7 +169,8 @@ struct Coroutine {
     init: Option<crate::boxed::Box<crate::thread::ThreadInit>>,
     /// The thread state of the side not running (see `swap`).
     state: [*mut (); 3],
-    _stack: crate::vec::Vec<u8>,
+    /// The shadow stack; freed once the coroutine finished.
+    stack: crate::vec::Vec<u8>,
     finished: bool,
     /// A coroutine waiting in `join` for this one.
     joiner: u32,
@@ -208,15 +209,38 @@ fn coroutine(id: u32) -> &'static mut Coroutine {
     unsafe { &mut *TABLE.get()[id as usize - 1] }
 }
 
+/// The bottom of each shadow stack holds this pattern. wasm has no guard page:
+/// a thread that runs past its stack would write over the heap below it, so
+/// the pattern is checked every time the thread pauses or ends, and a thread
+/// that overwrote it stops the game (better than running on with bad memory).
+const GUARD: usize = 4096;
+const GUARD_BYTE: u8 = 0xA5;
+
+fn check_guard(id: u32) {
+    let stack = &coroutine(id).stack;
+    if stack.len() >= GUARD && stack[..GUARD].iter().any(|&b| b != GUARD_BYTE) {
+        panic!("Horizon web: thread {id} ran past its stack");
+    }
+}
+
 pub fn spawn(init: crate::boxed::Box<crate::thread::ThreadInit>, stack_size: usize) -> u32 {
-    let size = stack_size.max(1 << 20);
+    // Finished coroutines never run again (each paused for good where it
+    // ended, before anything else ran): their stacks can go.
+    for &co in TABLE.get().iter() {
+        let co = unsafe { &mut *co };
+        if co.finished && !co.stack.is_empty() {
+            co.stack = crate::vec::Vec::new();
+        }
+    }
+    let size = stack_size.max(2 << 20);
     let mut stack = crate::vec::Vec::new();
     stack.resize(size, 0u8);
+    stack[..GUARD].fill(GUARD_BYTE);
     let top = (stack.as_ptr() as usize + size) & !15;
     let co = crate::boxed::Box::new(Coroutine {
         init: Some(init),
         state: [crate::ptr::null_mut(); 3],
-        _stack: stack,
+        stack,
         finished: false,
         joiner: 0,
     });
@@ -238,6 +262,7 @@ pub extern "C" fn horizon_std_thread_main(id: u32) {
     crate::thread::horizon_swap(&mut co.state);
     let start = init.init();
     start();
+    check_guard(id);
     let co = coroutine(id);
     co.finished = true;
     if co.joiner != 0 {
@@ -254,6 +279,7 @@ pub extern "C" fn horizon_std_thread_main(id: u32) {
 pub fn pause(timeout_ms: f64) -> bool {
     let id = running();
     assert!(id != 0, "Horizon web: the page's own thread cannot wait");
+    check_guard(id);
     crate::thread::horizon_swap(&mut coroutine(id).state);
     *RUNNING.get() = 0;
     let woken = unsafe { thread_suspend(id, timeout_ms) } != 0;

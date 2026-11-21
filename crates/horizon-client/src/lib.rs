@@ -5,10 +5,6 @@
 #[cfg(target_arch = "wasm32")]
 extern crate horizon_web_ureq as ureq;
 pub mod advancements;
-#[cfg(target_arch = "wasm32")]
-pub mod web;
-#[cfg(target_arch = "wasm32")]
-pub mod web_net;
 pub mod ambience;
 pub mod animate_tick;
 pub mod arrows;
@@ -153,6 +149,10 @@ pub mod screen_draw;
 pub mod screen_effects;
 pub mod screen_layout;
 pub mod sculk;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
+#[cfg(target_arch = "wasm32")]
+pub mod web_net;
 pub use horizon_server_files as server;
 pub mod server_packs;
 pub mod settings;

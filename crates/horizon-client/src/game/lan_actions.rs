@@ -1032,6 +1032,14 @@ impl Game<'_> {
         }
         let spectator = host.hub.guests[gi].spectator();
         match packet {
+            // ServerPlayerGameMode.handleBlockBreakAction: a block out of the
+            // player's reach is not dug ("too far"); the ack puts it back.
+            S::PlayerAction(a)
+                if matches!(a.action, 0 | 2 | 3)
+                    && !host.hub.guests[gi].within_block_range(a.pos, 1.0) =>
+            {
+                host.hub.ack(conn, a.sequence);
+            }
             S::PlayerAction(a) => match a.action {
                 0 => {
                     host.hub.ack(conn, a.sequence);
@@ -1173,9 +1181,17 @@ impl Game<'_> {
                     ],
                 };
                 let hand = if p.hand == 1 { Hand::Off } else { Hand::Main };
+                // handleUseItemOn: the hit must be at the block (within 1.0000001 of
+                // its centre on each axis) and the block within reach, or nothing is used.
+                let on_block = p
+                    .cursor
+                    .iter()
+                    .all(|c| (f64::from(*c) - 0.5).abs() < 1.0000001);
+                let reach = on_block && host.hub.guests[gi].within_block_range(p.pos, 1.0);
                 // handleUseItemOn: under spawn protection nothing is used or
                 // placed; the player is told and the blocks below go back.
-                if self.under_spawn_protection(host, gi, p.pos) {
+                if !reach {
+                } else if self.under_spawn_protection(host, gi, p.pos) {
                     self.spawn_protection_message(host, conn, p.pos);
                 } else {
                     let logged = self.world.block_log.as_ref().map_or(0, Vec::len);
@@ -1280,6 +1296,18 @@ impl Game<'_> {
                     return;
                 }
                 let item = self.item_from_network(host, &p.item);
+                // handleSetCreativeModeSlot: a stack above its item's maximum is
+                // not valid data and is ignored.
+                if let Some(stack) = &item
+                    && stack.count
+                        > self
+                            .res
+                            .items()
+                            .get(&stack.item)
+                            .map_or(64, |i| i.max_stack)
+                {
+                    return;
+                }
                 let slot = p.slot as usize;
                 let g = &mut host.hub.guests[gi];
                 let old = g.menu_slot(slot);

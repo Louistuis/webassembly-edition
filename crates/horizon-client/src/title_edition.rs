@@ -58,11 +58,26 @@ const S: &[[usize; 4]] = &[
 /// The browser build's W, A and M (with the S above), drawn the same way:
 /// U with a middle stem, an A with a crossbar, an upside-down U with a middle stem.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-const W: &[[usize; 4]] = &[[0, 0, 11, 32], [31, 0, 42, 32], [17, 14, 25, 39], [7, 29, 35, 39]];
+const W: &[[usize; 4]] = &[
+    [0, 0, 11, 32],
+    [31, 0, 42, 32],
+    [17, 14, 25, 39],
+    [7, 29, 35, 39],
+];
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-const A: &[[usize; 4]] = &[[7, 0, 35, 10], [0, 7, 11, 39], [31, 7, 42, 39], [0, 19, 42, 28]];
+const A: &[[usize; 4]] = &[
+    [7, 0, 35, 10],
+    [0, 7, 11, 39],
+    [31, 7, 42, 39],
+    [0, 19, 42, 28],
+];
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-const M: &[[usize; 4]] = &[[7, 0, 35, 10], [0, 7, 11, 39], [31, 7, 42, 39], [17, 0, 25, 25]];
+const M: &[[usize; 4]] = &[
+    [7, 0, 35, 10],
+    [0, 7, 11, 39],
+    [31, 7, 42, 39],
+    [17, 0, 25, 25],
+];
 
 /// The letters drawn in place of "JAVA".
 #[cfg(not(target_arch = "wasm32"))]

@@ -71,6 +71,10 @@ impl Pipe {
         }
         Some(state.0.drain(..).collect())
     }
+    /// Bytes this end wrote that the other end has not read yet.
+    pub fn unread(&self) -> usize {
+        self.end.outgoing.state.lock().unwrap().0.len()
+    }
     /// Close both directions: reads at either end then see the end of the stream.
     pub fn shutdown(&self) {
         self.end.incoming.close();

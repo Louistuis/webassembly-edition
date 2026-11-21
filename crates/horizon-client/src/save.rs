@@ -2090,47 +2090,47 @@ impl SaveDir {
         let pending = self.pending.clone();
         let outstanding = self.outstanding.clone();
         let write = move |batches: &mut dyn Iterator<Item = WriteBatch>| {
-                for (kind, batch) in batches {
-                    let cache = match kind {
-                        Folder::Region => &regions,
-                        Folder::Entities => &entity_regions,
-                        Folder::Poi => &poi_regions,
-                    };
-                    let folder = kind.name();
-                    // IOWorker.pendingWrites: a chunk queued again since is
-                    // written once, by its newest batch.
-                    let newest = |k: &(i32, i32), seq: u64| {
-                        pending.lock().map_or(true, |p| {
-                            p.get(&(kind, k.0, k.1)).is_none_or(|p| p.0 <= seq)
-                        })
-                    };
-                    let resolved: Vec<_> = batch
-                        .iter()
-                        .filter(|(k, _, seq)| newest(k, *seq))
-                        .filter_map(|(k, r, _)| Some((*k, resolve_poi(&root, cache, *k, r)?)))
-                        .collect();
-                    let records: Vec<_> = resolved.iter().map(|(k, r)| (*k, r)).collect();
-                    let result = write_region_records(&root, cache, folder, &records);
-                    if let Err(e) = &result {
-                        let message = format!("failed to write {folder} files: {e}");
-                        log::warn!("Horizon: {message}");
-                        *outstanding.error.lock().unwrap() = Some(message);
-                    }
-                    // Keep failed snapshots readable; never report them as durable.
-                    if result.is_ok()
-                        && let Ok(mut pending) = pending.lock()
-                    {
-                        for (k, _, seq) in &batch {
-                            if pending.get(&(kind, k.0, k.1)).is_some_and(|p| p.0 == *seq) {
-                                pending.remove(&(kind, k.0, k.1));
-                            }
+            for (kind, batch) in batches {
+                let cache = match kind {
+                    Folder::Region => &regions,
+                    Folder::Entities => &entity_regions,
+                    Folder::Poi => &poi_regions,
+                };
+                let folder = kind.name();
+                // IOWorker.pendingWrites: a chunk queued again since is
+                // written once, by its newest batch.
+                let newest = |k: &(i32, i32), seq: u64| {
+                    pending.lock().map_or(true, |p| {
+                        p.get(&(kind, k.0, k.1)).is_none_or(|p| p.0 <= seq)
+                    })
+                };
+                let resolved: Vec<_> = batch
+                    .iter()
+                    .filter(|(k, _, seq)| newest(k, *seq))
+                    .filter_map(|(k, r, _)| Some((*k, resolve_poi(&root, cache, *k, r)?)))
+                    .collect();
+                let records: Vec<_> = resolved.iter().map(|(k, r)| (*k, r)).collect();
+                let result = write_region_records(&root, cache, folder, &records);
+                if let Err(e) = &result {
+                    let message = format!("failed to write {folder} files: {e}");
+                    log::warn!("Horizon: {message}");
+                    *outstanding.error.lock().unwrap() = Some(message);
+                }
+                // Keep failed snapshots readable; never report them as durable.
+                if result.is_ok()
+                    && let Ok(mut pending) = pending.lock()
+                {
+                    for (k, _, seq) in &batch {
+                        if pending.get(&(kind, k.0, k.1)).is_some_and(|p| p.0 == *seq) {
+                            pending.remove(&(kind, k.0, k.1));
                         }
                     }
-                    if let Ok(mut count) = outstanding.count.lock() {
-                        *count -= 1;
-                        outstanding.done.notify_all();
-                    }
                 }
+                if let Ok(mut count) = outstanding.count.lock() {
+                    *count -= 1;
+                    outstanding.done.notify_all();
+                }
+            }
         };
         // The browser build (docs/web.md) has no thread to spare: `queue`
         // writes each batch at once, on the game's thread.

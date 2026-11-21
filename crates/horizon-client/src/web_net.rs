@@ -39,6 +39,10 @@ extern "C" {
     fn js_games() -> String;
 }
 
+/// Bytes from the room a connection may hold unread before it is closed (a
+/// player sending faster than the game reads is flooding it).
+const MAX_UNREAD: usize = 16 << 20;
+
 /// The page's ends of the open connections.
 static CONNECTIONS: Mutex<Vec<(u32, Pipe)>> = Mutex::new(Vec::new());
 /// The world this page hosts, while it accepts players.
@@ -82,21 +86,25 @@ pub fn games() -> Vec<crate::lan::discovery::LanGame> {
         .collect()
 }
 
-/// A guest asks to join: serve it like an accepted socket. Whether this page
-/// hosts a world to join.
+/// A guest asks to join: serve it like an accepted socket, as a player who
+/// may only be called `name` (their room name). Whether this page hosts a
+/// world to join.
 #[wasm_bindgen]
-pub fn horizon_net_accept(conn: u32) -> bool {
+pub fn horizon_net_accept(conn: u32, name: String) -> bool {
     let Some(shared) = HOST.lock().unwrap().clone() else {
         return false;
     };
     let (server, page) = Pipe::pair();
     CONNECTIONS.lock().unwrap().push((conn, page));
     // Each guest its own private address, as each socket has one.
-    let address = std::net::SocketAddr::from(([10, (conn >> 16) as u8, (conn >> 8) as u8, conn as u8], 25565));
+    let address = std::net::SocketAddr::from((
+        [10, (conn >> 16) as u8, (conn >> 8) as u8, conn as u8],
+        25565,
+    ));
     let spawned = std::thread::Builder::new()
         .name("horizon-lan-conn".into())
         .spawn(move || {
-            if let Err(e) = crate::lan::conn::serve_pipe(server, address, shared) {
+            if let Err(e) = crate::lan::conn::serve_pipe(server, address, shared, &name) {
                 log::info!("Horizon: a WebSim player left: {e}");
             }
         });
@@ -108,8 +116,9 @@ pub fn horizon_net_accept(conn: u32) -> bool {
 pub fn horizon_net_deliver(conn: u32, data: &[u8]) {
     let mut connections = CONNECTIONS.lock().unwrap();
     if let Some((_, pipe)) = connections.iter_mut().find(|(id, _)| *id == conn)
-        && pipe.write_all(data).is_err()
+        && (pipe.unread() + data.len() > MAX_UNREAD || pipe.write_all(data).is_err())
     {
+        pipe.shutdown();
         connections.retain(|(id, _)| *id != conn);
         drop(connections);
         js_close(conn);

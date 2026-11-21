@@ -1598,7 +1598,11 @@ impl Streaming {
     /// up to `budget` (a frame's share); nothing on native, where workers do.
     /// The browser build's heartbeat: queued jobs, chunks generating, protos.
     pub fn web_stats(&self) -> (usize, usize, usize) {
-        (self.shared.queue.lock().unwrap().len(), self.generating.len(), self.protos.len())
+        (
+            self.shared.queue.lock().unwrap().len(),
+            self.generating.len(),
+            self.protos.len(),
+        )
     }
     pub fn pump(&mut self, budget: std::time::Duration) {
         if let Some(inline) = self.inline.as_mut() {

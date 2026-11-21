@@ -13643,14 +13643,17 @@ impl ApplicationHandler for Game<'_> {
                 self.answer(horizon_client::control::Request { line, reply }, event_loop);
                 WAITING.lock().unwrap().push(answer);
             }
-            WAITING.lock().unwrap().retain(|answer| match answer.try_recv() {
-                Ok(text) => {
-                    horizon_client::web::REPLIES.lock().unwrap().push(text);
-                    false
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => true,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
-            });
+            WAITING
+                .lock()
+                .unwrap()
+                .retain(|answer| match answer.try_recv() {
+                    Ok(text) => {
+                        horizon_client::web::REPLIES.lock().unwrap().push(text);
+                        false
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+                });
             static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap();
             if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {

@@ -938,7 +938,8 @@ async fn open_device(
 #[cfg(target_arch = "wasm32")]
 /// The browser build: a submitted frame the GPU has not finished yet.
 #[cfg(target_arch = "wasm32")]
-static WEB_FRAME_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WEB_FRAME_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 thread_local! {
     static WEB_GPU: std::cell::RefCell<Option<(wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue)>> =
         const { std::cell::RefCell::new(None) };

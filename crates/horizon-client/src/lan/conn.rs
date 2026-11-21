@@ -438,7 +438,12 @@ pub fn serve(
     {
         return serve_legacy(stream, &shared);
     }
-    serve_connection(Connection::from_stream(stream).map_err(e)?, address, shared)
+    serve_connection(
+        Connection::from_stream(stream).map_err(e)?,
+        address,
+        shared,
+        None,
+    )
 }
 
 /// `ServerConnectionListener.startMemoryChannel`: an integrated server's
@@ -448,23 +453,32 @@ pub fn serve_local(
     shared: Arc<Shared>,
 ) -> Result<(), String> {
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
-    serve_connection(Connection::local(pipe), address, shared)
+    serve_connection(Connection::local(pipe), address, shared, None)
 }
 
 /// A player from elsewhere over an in-memory pipe (the browser build's
 /// WebSim players, docs/web.md), served as an accepted socket from `address`.
+/// The player may log in only as `name` (who the room says they are).
 pub fn serve_pipe(
     pipe: horizon_protocol::connection::Pipe,
     address: std::net::SocketAddr,
     shared: Arc<Shared>,
+    name: &str,
 ) -> Result<(), String> {
-    serve_connection(Connection::local(pipe), address, shared)
+    // An empty name pins nothing (the test room between tabs has no names).
+    serve_connection(
+        Connection::local(pipe),
+        address,
+        shared,
+        Some(name).filter(|n| !n.is_empty()),
+    )
 }
 
 fn serve_connection(
     mut c: Connection,
     address: std::net::SocketAddr,
     shared: Arc<Shared>,
+    name: Option<&str>,
 ) -> Result<(), String> {
     let e = |e: horizon_protocol::Error| e.to_string();
     c.reader
@@ -504,7 +518,7 @@ fn serve_connection(
                 );
                 return Ok(());
             }
-            serve_login(c, address, &shared)
+            serve_login(c, address, &shared, name)
         }
         other => Err(format!("unknown intent {other}")),
     }
@@ -679,6 +693,7 @@ fn serve_login(
     mut c: Connection,
     address: std::net::SocketAddr,
     shared: &Arc<Shared>,
+    required: Option<&str>,
 ) -> Result<(), String> {
     let e = |e: horizon_protocol::Error| e.to_string();
     let (id, payload) = c.recv().map_err(e)?;
@@ -686,7 +701,9 @@ fn serve_login(
         login::Serverbound::Hello(h) => h,
         _ => return Err("expected a login hello".into()),
     };
-    if !valid_name(&hello.name) {
+    // Offline mode trusts the name; a browser player's is pinned to who the
+    // room says they are, so nobody logs in as someone else.
+    if !valid_name(&hello.name) || required.is_some_and(|r| r != hello.name) {
         login_disconnect(
             &mut c,
             &translatable("multiplayer.disconnect.invalid_name", &[]),
@@ -1025,6 +1042,16 @@ fn read_loop(
     alive: &AtomicI64,
     required_pack: bool,
 ) -> Result<String, u128> {
+    // The browser build's players come through a public room: one sending far
+    // more packets than a game does is disconnected, as a server with
+    // rate-limit set does (Connection's packet limiter), before its queue
+    // grows without end. Tokens per second and the burst held.
+    #[cfg(target_arch = "wasm32")]
+    const RATE: f64 = 500.0;
+    #[cfg(target_arch = "wasm32")]
+    const BURST: f64 = 2000.0;
+    #[cfg(target_arch = "wasm32")]
+    let (mut tokens, mut last) = (BURST, std::time::Instant::now());
     loop {
         let (id, payload) = match reader.recv() {
             Ok(p) => p,
@@ -1039,6 +1066,15 @@ fn read_loop(
             }
             Err(e) => return Ok(e.to_string()),
         };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let now = std::time::Instant::now();
+            tokens = (tokens + now.duration_since(last).as_secs_f64() * RATE).min(BURST) - 1.0;
+            last = now;
+            if tokens < 0.0 {
+                return Ok("Exceeded packet rate".to_owned());
+            }
+        }
         match play::Serverbound::decode(id, &payload) {
             Ok(play::Serverbound::KeepAlive(k)) => alive.store(k.id, Ordering::Relaxed),
             Ok(play::Serverbound::ResourcePack(r))

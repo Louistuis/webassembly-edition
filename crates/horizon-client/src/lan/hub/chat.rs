@@ -110,6 +110,17 @@ impl Hub {
             );
             return false;
         }
+        // detectRateSpam: each message or command adds 20, each tick takes 1
+        // away; at 200 a player who is not an op is disconnected.
+        let ticks = self.ticks;
+        let g = &mut self.guests[i];
+        let (count, at) = g.chat_spam;
+        let count = count.saturating_sub(ticks.saturating_sub(at)) + 20;
+        g.chat_spam = (count, ticks);
+        if count >= 200 && g.permission == 0 {
+            self.kick(conn, translatable("disconnect.spam", &[]));
+            return false;
+        }
         // ChatVisiblity.HIDDEN.
         if !command && self.guests[i].info.chat_visibility == 2 {
             self.guests[i].send(&C::SystemChat(play::SystemChat {
