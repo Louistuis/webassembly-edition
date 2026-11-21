@@ -45,9 +45,11 @@ while (Date.now() < deadline) {
     lines: globalThis.horizon?.lines?.slice(-40) ?? [],
     errors: globalThis.horizon?.errors ?? [],
     shaderErrors: globalThis.horizon?.shaderErrors ?? [],
+    counters: globalThis.horizon?.counters,
+    jsMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : 0,
     wasmMB: globalThis.horizon?.state?.memory ? Math.round(globalThis.horizon.state.memory.buffer.byteLength / 1048576) : 0,
   })).catch((e) => ({ evalError: String(e) }));
-  console.log(`t=${report.t}s wasm=${report.wasmMB}MB errors=${report.errors?.length} last=${(report.lines?.at(-1) || '').slice(0, 120)}`);
+  console.log(`t=${report.t}s wasm=${report.wasmMB}MB js=${report.jsMB}MB persist=${report.counters?.persistCalls}/${Math.round((report.counters?.persistBytes || 0) / 1048576)}MB errors=${report.errors?.length} last=${(report.lines?.at(-1) || '').slice(0, 120)}`);
   if (report.errors?.length) break;
 }
 await page.screenshot({ path: `${out}.png` }).catch(() => {});

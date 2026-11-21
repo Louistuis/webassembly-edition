@@ -12445,7 +12445,9 @@ impl Game<'_> {
         }
     }
     fn prepare_lod(&mut self) {
-        let enabled = self.far_terrain_choice().0 > 0
+        // The browser build (docs/web.md): far terrain needs worker threads.
+        let enabled = !cfg!(target_arch = "wasm32")
+            && self.far_terrain_choice().0 > 0
             && self.renderer.is_some()
             && self.player.is_some()
             && self.title.is_none()

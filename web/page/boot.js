@@ -4,7 +4,7 @@
 import init, { horizon_start } from './horizon.js';
 import * as game from './horizon.js';
 import { startNet } from './net.js';
-import { state, lines, useExports } from './std.js';
+import { state, lines, useExports, counters } from './std.js';
 
 const RESOURCES = '/horizon/.local/horizon-client/26.3/';
 // The game files: beside the page in tests, or on the locked file host that
@@ -19,6 +19,11 @@ const status = document.getElementById('boot-status');
 const errors = [];
 const consoleError = console.error.bind(console);
 console.error = (...args) => {
+  // A panic stops the game for good: say so instead of a frozen picture.
+  const first = String(args[0] ?? '');
+  if (first.startsWith('panicked at') && !screen.classList.contains('failed')) {
+    queueMicrotask(() => globalThis.horizon?.fail?.(`The game stopped because of an error:\n${first.split('\n').slice(0, 2).join(' ')}`));
+  }
   if (errors.length < 8) {
     const text = args.map(String).join(' ');
     const frames = text.split('\n').filter((l) => l.includes('.wasm.'))
@@ -123,6 +128,7 @@ if (globalThis.GPUQueue) {
   };
 }
 globalThis.horizon = {
+  counters,
   snapshotState: () => ({ texture: !!frameTexture, device: !!gameDevice, waiting: !!snapshotWaiting, snapshotDebug }),
   snapshot() {
     return new Promise((resolve) => { snapshotWaiting = { resolve, queued: false }; });

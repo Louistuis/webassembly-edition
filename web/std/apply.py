@@ -172,6 +172,14 @@ pub(crate) use current::horizon_swap;""")
 """)
 
 
+    # A process id: the page's, fixed for its lifetime (some ids and seeds mix it in).
+    edit(sysdir / "process/unsupported.rs",
+         'pub fn getpid() -> u32 {\n    panic!("no pids on this platform")\n}',
+         'pub fn getpid() -> u32 {\n'
+         '    static PID: crate::sync::OnceLock<u32> = crate::sync::OnceLock::new();\n'
+         '    *PID.get_or_init(|| (crate::sys::horizon_web::epoch() as u64 % 4_000_000_000) as u32 | 1)\n'
+         '}')
+
     # The working directory the in-memory file system resolves relative paths against.
     edit(sysdir / "paths/unsupported.rs",
          "pub fn getcwd() -> io::Result<PathBuf> {\n    unsupported()\n}",

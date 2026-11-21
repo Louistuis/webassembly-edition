@@ -70,8 +70,11 @@ export function fs_load(ptr, len) {
 }
 export function fs_load_copy(dst) { copy(dst); }
 
+export const counters = { persistCalls: 0, persistBytes: 0, loads: 0 };
 export function fs_persist(ptr, len, data, dataLen) {
   const path = text(ptr, len);
+  counters.persistCalls += 1;
+  counters.persistBytes += dataLen;
   if (path.endsWith('/')) {
     state.folders.add(path);
     state.onPersist?.(path, null);

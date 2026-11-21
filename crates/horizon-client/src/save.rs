@@ -1865,7 +1865,11 @@ impl Folder {
 /// submission order.
 struct Writer {
     send: mpsc::Sender<WriteBatch>,
+    #[cfg(not(target_arch = "wasm32"))]
     thread: std::thread::JoinHandle<()>,
+    /// The browser build: writes what was sent, on the calling thread.
+    #[cfg(target_arch = "wasm32")]
+    drain: Box<dyn FnMut() + Send>,
 }
 
 /// Writes still queued or running, with a condition to wait for none.
@@ -2052,7 +2056,10 @@ impl SaveDir {
                 .map_err(|_| "writer poisoned")? += 1;
             let mut writer = self.writer.lock().map_err(|_| "writer poisoned")?;
             let writer = writer.get_or_insert_with(|| self.start_writer());
-            if writer.send.send((folder, batch)).is_err() {
+            let sent = writer.send.send((folder, batch));
+            #[cfg(target_arch = "wasm32")]
+            (writer.drain)();
+            if sent.is_err() {
                 *self
                     .outstanding
                     .error
@@ -2082,10 +2089,8 @@ impl SaveDir {
         );
         let pending = self.pending.clone();
         let outstanding = self.outstanding.clone();
-        let thread = std::thread::Builder::new()
-            .name("horizon-region-writer".into())
-            .spawn(move || {
-                for (kind, batch) in receive {
+        let write = move |batches: &mut dyn Iterator<Item = WriteBatch>| {
+                for (kind, batch) in batches {
                     let cache = match kind {
                         Folder::Region => &regions,
                         Folder::Entities => &entity_regions,
@@ -2126,9 +2131,22 @@ impl SaveDir {
                         outstanding.done.notify_all();
                     }
                 }
-            })
-            .expect("spawn region writer");
-        Writer { send, thread }
+        };
+        // The browser build (docs/web.md) has no thread to spare: `queue`
+        // writes each batch at once, on the game's thread.
+        #[cfg(target_arch = "wasm32")]
+        return Writer {
+            send,
+            drain: Box::new(move || write(&mut receive.try_iter())),
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let thread = std::thread::Builder::new()
+                .name("horizon-region-writer".into())
+                .spawn(move || write(&mut receive.into_iter()))
+                .expect("spawn region writer");
+            Writer { send, thread }
+        }
     }
     /// Wait until every queued write is on disk.
     pub fn flush(&self) -> Result<()> {
@@ -2253,6 +2271,8 @@ impl Drop for SaveDir {
     fn drop(&mut self) {
         if let Some(writer) = self.writer.get_mut().ok().and_then(Option::take) {
             drop(writer.send);
+            // The browser build wrote everything already (`queue`).
+            #[cfg(not(target_arch = "wasm32"))]
             let _ = writer.thread.join();
         }
     }
