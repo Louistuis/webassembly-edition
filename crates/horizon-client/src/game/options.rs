@@ -224,11 +224,30 @@ impl Game<'_> {
                     self.settings.save(&Self::options_path());
                     self.reload_packs();
                 }
+                // The browser build: its page takes the files (no folders to open).
+                #[cfg(target_arch = "wasm32")]
+                Event::OpenPackFolder => {
+                    horizon_client::web_edition::open("packs:resourcepacks", self.title.is_none())
+                }
+                #[cfg(target_arch = "wasm32")]
+                Event::OpenModFolder => {
+                    horizon_client::web_edition::open("packs:mods", self.title.is_none())
+                }
+                #[cfg(target_arch = "wasm32")]
+                Event::OpenShaderPackFolder => {
+                    horizon_client::web_edition::open("packs:shaderpacks", self.title.is_none())
+                }
+                #[cfg(target_arch = "wasm32")]
+                Event::Edition(tab) => horizon_client::web_edition::open(tab, self.title.is_none()),
+                #[cfg(not(target_arch = "wasm32"))]
+                Event::Edition(_) => {}
+                #[cfg(not(target_arch = "wasm32"))]
                 Event::OpenPackFolder => {
                     let dir = super::packs::packs_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     super::packs::open_folder(&dir);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 Event::OpenModFolder => {
                     let dir = Self::options_path().with_file_name(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
@@ -240,6 +259,7 @@ impl Game<'_> {
                 }
                 // Saved; the next frame's `shader_pack_inputs` loads the pick.
                 Event::ShaderPack => self.settings.save(&Self::options_path()),
+                #[cfg(not(target_arch = "wasm32"))]
                 Event::OpenShaderPackFolder => {
                     let dir = Self::shader_packs_dir();
                     let _ = std::fs::create_dir_all(&dir);

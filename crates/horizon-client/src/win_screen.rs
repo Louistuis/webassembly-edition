@@ -252,6 +252,22 @@ impl WinScreen {
             256.0,
             64.0,
         );
+        // The browser build on WebSim: its "websim" wordmark before the
+        // banner, the pair centred (as on the title screen).
+        #[cfg(target_arch = "wasm32")]
+        let edition_x = if crate::web_edition::websim() {
+            let x = (w / 2.0).floor() - 104.0;
+            batch.sprite_region(
+                atlas,
+                crate::web_edition::LOGO,
+                [x - 26.0, logo_y + 44.0 - 10.0 + y_offs, 128.0, 28.0],
+                128.0,
+                28.0,
+            );
+            x + 80.0
+        } else {
+            edition_x
+        };
         batch.sprite_region(
             atlas,
             crate::title_edition::SPRITE,

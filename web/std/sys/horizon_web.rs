@@ -72,8 +72,15 @@ pub fn load(path: &str) -> Option<crate::vec::Vec<u8>> {
     }
     Some(out)
 }
+/// What the page never keeps (boot.js's KEPT says the same): caches the game
+/// rebuilds, such as content mods' resource overlay. Not even handed over.
+fn scratch(path: &str) -> bool {
+    path.starts_with("/horizon/.horizon-cache/") || path.starts_with("/tmp/")
+}
 pub fn persist(path: &str, data: &[u8]) {
-    unsafe { fs_persist(path.as_ptr(), path.len(), data.as_ptr(), data.len()) }
+    if !scratch(path) {
+        unsafe { fs_persist(path.as_ptr(), path.len(), data.as_ptr(), data.len()) }
+    }
 }
 pub fn forget(path: &str) {
     unsafe { fs_forget(path.as_ptr(), path.len()) }

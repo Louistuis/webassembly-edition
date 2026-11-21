@@ -12645,6 +12645,11 @@ impl Game<'_> {
         }
     }
 }
+/// The browser build: when this frame's chunk jobs ended (`about_to_wait`
+/// times the rest of the frame from it).
+#[cfg(target_arch = "wasm32")]
+static WEB_FRAME_UPDATED: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
 impl ApplicationHandler for Game<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -13449,11 +13454,22 @@ impl ApplicationHandler for Game<'_> {
                             + (turn(KeyCode::ArrowDown) - turn(KeyCode::ArrowUp)) * 90.0 * secs)
                             .clamp(-90.0, 90.0);
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    horizon_client::streaming::WEB_LOADING.store(
+                        self.loading_reason().is_some(),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                     if self.title.is_none() {
                         horizon_client::spans::time("update_world", || self.update_world());
                         horizon_client::spans::time("spawn_player", || self.spawn_player())?;
                     }
                     let updated = Instant::now();
+                    // The browser build: the rest of this frame, timed for the
+                    // next frame's chunk jobs (`streaming::web_pump_budget`).
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        *WEB_FRAME_UPDATED.lock().unwrap() = Some(updated);
+                    }
                     self.track_toggle_screens();
                     // For the "I'm playing" ping: an atomic, sent on when it changes.
                     horizon_client::heartbeat::set_lan(self.is_published());
@@ -13654,6 +13670,13 @@ impl ApplicationHandler for Game<'_> {
                     Err(std::sync::mpsc::TryRecvError::Empty) => true,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
                 });
+            // The frame is over: what it took after its chunk jobs.
+            if let Some(updated) = WEB_FRAME_UPDATED.lock().unwrap().take() {
+                horizon_client::streaming::WEB_FRAME_REST_US.store(
+                    updated.elapsed().as_micros().min(1_000_000) as u32,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
             static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap();
             if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {

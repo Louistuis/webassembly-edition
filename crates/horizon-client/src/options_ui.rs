@@ -876,6 +876,8 @@ enum Act {
     /// Credits & Attribution's Credits button (WinScreen without the poem).
     Credits,
     CopyAgentDetails,
+    /// The browser build's own page of that tab (`web_edition::open`).
+    Edition(&'static str),
 }
 enum WKind {
     Button {
@@ -935,6 +937,8 @@ pub enum Event {
     Credits,
     /// Copy how an agent connects (the AI Agent page).
     CopyAgentDetails,
+    /// Show the browser build's own page of that tab (`web_edition::open`).
+    Edition(&'static str),
 }
 /// `SliderableValueSet.applyValueImmediately`: these apply 600 ms after
 /// the last change (`OptionInstanceSliderButton.delayedApplyAt`).
@@ -1173,6 +1177,7 @@ impl OptionsUi {
             Page::PadBinds => "Controller Binds",
             Page::Extras => "Horizon Extras",
             Page::Credits => "credits_and_attribution.screen.title",
+            Page::Horizon if cfg!(target_arch = "wasm32") => "WASM Edition Settings",
             Page::Horizon => "Horizon Settings",
             Page::Agent => "AI Agent",
         }
@@ -1271,6 +1276,39 @@ impl OptionsUi {
                 }
                 flush(&mut rows, &mut section);
                 rows
+            }
+            Page::Horizon if cfg!(target_arch = "wasm32") => {
+                // WASM Edition Settings: the game's own pages that work in
+                // the browser, and the page's (mods and packs, worlds,
+                // credits). No Discord, no agent socket here.
+                let open = |label: &str, page: Page| {
+                    button(0.0, 0.0, 150.0, Text::literal(label), Act::Push(page))
+                };
+                let page = |label: &str, tab: &'static str| {
+                    button(0.0, 0.0, 150.0, Text::literal(label), Act::Edition(tab))
+                };
+                vec![
+                    Row::Buttons(
+                        open("Graphics...", Page::Graphics),
+                        Some(open("Advanced Graphics...", Page::GraphicsAdvanced)),
+                    ),
+                    Row::Buttons(
+                        open("Shader Packs (Beta)...", Page::ShaderPacks),
+                        Some(open("Mods (Beta)...", Page::Mods)),
+                    ),
+                    Row::Buttons(
+                        open("Extras...", Page::Extras),
+                        Some(open("Controller Settings...", Page::Controller)),
+                    ),
+                    Row::Buttons(
+                        page("Add Mods & Packs...", "packs"),
+                        Some(page("Worlds & Storage...", "worlds")),
+                    ),
+                    Row::Buttons(
+                        page("Edition Settings...", "settings"),
+                        Some(page("Credits...", "credits")),
+                    ),
+                ]
             }
             Page::Horizon => {
                 // Two to a row, as vanilla's OptionsList.addSmall lays out
@@ -1579,16 +1617,30 @@ impl OptionsUi {
                     list: false,
                 });
                 out.push(option_widget(s, Opt::Fov, cx - 154.0, 29.0, 150.0));
-                out.push(inactive(button(
-                    cx + 4.0,
-                    29.0,
-                    150.0,
-                    tr("options.online"),
-                    Act::None,
-                )));
+                // The browser build: its worlds (download, import) where
+                // Online... is.
+                out.push(if cfg!(target_arch = "wasm32") {
+                    button(
+                        cx + 4.0,
+                        29.0,
+                        150.0,
+                        Text::literal("Worlds & Storage..."),
+                        Act::Edition("worlds"),
+                    )
+                } else {
+                    inactive(button(
+                        cx + 4.0,
+                        29.0,
+                        150.0,
+                        tr("options.online"),
+                        Act::None,
+                    ))
+                });
+                let web = cfg!(target_arch = "wasm32");
                 let entries = [
                     ("options.skinCustomisation", None),
-                    ("options.sounds", Some(Page::Sound)),
+                    // No sound in the browser build yet.
+                    ("options.sounds", (!web).then_some(Page::Sound)),
                     ("options.video", Some(Page::Video)),
                     ("options.controls", Some(Page::Controls)),
                     ("options.language", Some(Page::Language)),
@@ -1598,7 +1650,14 @@ impl OptionsUi {
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
-                    ("Horizon Settings...", Some(Page::Horizon)),
+                    (
+                        if web {
+                            "WASM Edition..."
+                        } else {
+                            "Horizon Settings..."
+                        },
+                        Some(Page::Horizon),
+                    ),
                     ("Mods...", Some(Page::Mods)),
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];
@@ -1607,7 +1666,13 @@ impl OptionsUi {
                 for (i, (key, page)) in entries.iter().enumerate() {
                     let x = cx - 158.0 + 4.0 + (i % 2) as f32 * 158.0;
                     let y = gy + (i / 2) as f32 * 24.0;
-                    let b = button(x, y, 150.0, tr(key), page.map_or(Act::None, Act::Push));
+                    // The browser build's credits are its own page.
+                    let act = match page {
+                        Some(Page::Credits) if web => Act::Edition("credits"),
+                        Some(page) => Act::Push(*page),
+                        None => Act::None,
+                    };
+                    let b = button(x, y, 150.0, tr(key), act);
                     out.push(if page.is_some() { b } else { inactive(b) });
                 }
                 out.push(done(h - 27.0));
@@ -2031,7 +2096,13 @@ impl OptionsUi {
                 }
                 content = y + self.scroll - top + 2.0;
                 out[list_start..].iter_mut().for_each(|w| w.list = true);
+                // The browser build has no folders: its page takes the files.
+                let web = cfg!(target_arch = "wasm32");
                 let folder = match page {
+                    Page::Mods if web => Some(("Add Mods...", Act::OpenModFolder)),
+                    Page::ShaderPacks if web => {
+                        Some(("Add Shader Packs...", Act::OpenShaderPackFolder))
+                    }
                     Page::Mods => Some(("Open Mod Folder", Act::OpenModFolder)),
                     Page::ShaderPacks => Some(("Open Pack Folder", Act::OpenShaderPackFolder)),
                     _ => None,
@@ -2572,6 +2643,7 @@ impl OptionsUi {
                         Act::OpenShaderPackFolder => events.push(Event::OpenShaderPackFolder),
                         Act::Credits => events.push(Event::Credits),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
+                        Act::Edition(tab) => events.push(Event::Edition(tab)),
                         Act::None => {}
                     }
                 }

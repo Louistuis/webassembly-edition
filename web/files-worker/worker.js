@@ -1,8 +1,9 @@
-// The locked file host of the WebSim copy (docs/web.md): serves the packed
-// game files (Mojang's, so never public) only with the access key, and only to
-// pages on websim.com. The files are the Worker's static assets, which this
-// script guards (`run_worker_first`); web/publish.sh deploys it.
-const WEBSIM = /^https:\/\/([a-z0-9-]+\.)*websim\.(com|ai)$/;
+// The locked file host (docs/web.md): serves the packed game files (Mojang's,
+// so never public) only with the access key, and only to the two copies of the
+// page: on websim.com and on minecraft.lou15.com. The files are the Worker's
+// static assets, which this script guards (`run_worker_first`); web/publish.sh
+// deploys it.
+const PAGES = /^https:\/\/(([a-z0-9-]+\.)*websim\.(com|ai)|minecraft\.lou15\.com)$/;
 
 async function digest(text) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
@@ -21,7 +22,7 @@ export default {
   async fetch(request, env) {
     const origin = request.headers.get('origin') || '';
     const cors = { vary: 'origin' };
-    if (WEBSIM.test(origin)) {
+    if (PAGES.test(origin)) {
       Object.assign(cors, {
         'access-control-allow-origin': origin,
         'access-control-allow-headers': 'x-access-key',

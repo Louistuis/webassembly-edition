@@ -767,8 +767,27 @@ pub fn symlink(_original: &Path, _link: &Path) -> io::Result<()> {
     Err(io::const_error!(io::ErrorKind::Unsupported, "no symbolic links in the browser"))
 }
 
-pub fn link(_src: &Path, _dst: &Path) -> io::Result<()> {
-    Err(io::const_error!(io::ErrorKind::Unsupported, "no hard links in the browser"))
+/// A hard link: `dst` names the same file as `src` (its bytes, loaded once),
+/// so an overlay of the resources (content mods) costs no copies.
+pub fn link(src: &Path, dst: &Path) -> io::Result<()> {
+    let (src, dst) = (key(src), key(dst));
+    let mut guard = tree();
+    let tree = guard.as_mut().unwrap();
+    let data = match tree.nodes.get(&src) {
+        Some(Node::File(data)) => data.clone(),
+        Some(Node::Dir { .. }) => {
+            return Err(io::const_error!(io::ErrorKind::IsADirectory, "a folder can't be hard linked"));
+        }
+        None => return Err(not_found()),
+    };
+    if tree.nodes.contains_key(&dst) {
+        return Err(io::const_error!(io::ErrorKind::AlreadyExists, "the link's path exists"));
+    }
+    if !tree.is_dir(parent(&dst)) {
+        return Err(not_found());
+    }
+    tree.nodes.insert(dst, Node::File(data));
+    Ok(())
 }
 
 pub fn stat(p: &Path) -> io::Result<FileAttr> {

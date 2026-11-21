@@ -5,7 +5,9 @@
 #          files, synced to the WebSim project.
 #   files  the packed game files (Mojang's): on the locked file host, a
 #          Cloudflare Worker (web/files-worker) that serves them only with the
-#          access key and only to websim.com pages. Never on a public page.
+#          access key and only to the page's two copies. Never on a public page.
+#   site   the same page on Louis's own domain (SITE_DOMAIN, default
+#          minecraft.lou15.com; - to skip), a Worker of static assets.
 #
 # Both stages live on Louis-RAID, never in this repository. The access key is
 # made once, in .local/websim-access-key (git-ignored).
@@ -79,3 +81,19 @@ fi
 
 cd "$STAGE/page"
 websim-cli projects sync "$PROJECT" --no-open -m "$MESSAGE"
+
+# The same page on Louis's own site (its plain WASM Edition brand: the page
+# picks it from the host), a Worker of static assets only.
+SITE_DOMAIN=${SITE_DOMAIN:-minecraft.lou15.com}
+if [ "$SITE_DOMAIN" != "-" ]; then
+  cat > "$STAGE/site-worker.jsonc" <<JSON
+{
+  "name": "wasm-edition-site",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "$SITE_DOMAIN", "custom_domain": true }],
+  "assets": { "directory": "$STAGE/page", "not_found_handling": "404-page" }
+}
+JSON
+  (cd "$STAGE" && npx -y wrangler@4 deploy -c site-worker.jsonc)
+fi

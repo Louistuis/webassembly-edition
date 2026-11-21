@@ -538,16 +538,39 @@ impl<G: ChunkGenerator> Pump for Worker<G> {
         }
     }
 }
-/// How long each frame runs chunk jobs in the browser build (docs/web.md):
-/// `HORIZON_WEB_PUMP_MS`, 12 ms by default.
+/// The browser build's frame, as the game last measured it (docs/web.md): what
+/// everything but the chunk jobs took (ticks, drawing), in microseconds, and
+/// whether the loading screen is up (nothing to keep smooth yet).
+pub static WEB_FRAME_REST_US: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub static WEB_LOADING: AtomicBool = AtomicBool::new(false);
+/// How long each frame runs chunk jobs in the browser build, where they share
+/// the one thread with the frame: what is left of the display's refresh after
+/// the rest of the frame (between 2 and 12 ms), so terrain loads without the
+/// frame rate paying for it, and 40 ms while the loading screen is up.
+/// `HORIZON_WEB_PUMP_MS` fixes it.
 fn web_pump_budget() -> std::time::Duration {
-    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    std::time::Duration::from_millis(*MS.get_or_init(|| {
+    static FIXED: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    let fixed = FIXED.get_or_init(|| {
         std::env::var("HORIZON_WEB_PUMP_MS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(12)
-    }))
+    });
+    if let Some(ms) = fixed {
+        return std::time::Duration::from_millis(*ms);
+    }
+    if WEB_LOADING.load(Ordering::Relaxed) {
+        return std::time::Duration::from_millis(40);
+    }
+    // The time to the display's next refresh (60 Hz assumed) after the rest
+    // of the frame and a 2 ms margin; a frame already at a refresh's edge
+    // takes the next one whole rather than miss by a little.
+    const REFRESH: u64 = 16_667;
+    let rest = u64::from(WEB_FRAME_REST_US.load(Ordering::Relaxed));
+    let mut slack = REFRESH - (rest + 2_000) % REFRESH;
+    if slack < 2_000 {
+        slack += REFRESH;
+    }
+    std::time::Duration::from_micros(slack.min(12_000))
 }
 pub struct WorkerContext {
     pub assets: Arc<crate::assets::Assets>,

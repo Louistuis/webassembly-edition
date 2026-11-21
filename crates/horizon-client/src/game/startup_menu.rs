@@ -394,7 +394,7 @@ impl Loading {
                 // Mods' settings pages open only in a running game.
                 Event::ModSettings(_) => {}
                 // The startup menu runs before the game opens a control socket.
-                Event::ButtonClick | Event::CopyAgentDetails => {}
+                Event::ButtonClick | Event::CopyAgentDetails | Event::Edition(_) => {}
             }
         }
     }

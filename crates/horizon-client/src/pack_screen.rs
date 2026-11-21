@@ -852,11 +852,16 @@ impl PackScreen {
         }
         for (i, (bx, by)) in self.footer().into_iter().enumerate() {
             let hover = d::inside(mouse, bx, by, 150, 20);
-            let label = tr(if i == 0 {
-                "pack.openFolder"
+            let label = if i == 0 && cfg!(target_arch = "wasm32") {
+                // The browser build's page takes the files.
+                Text::literal("Add Packs...")
             } else {
-                "gui.done"
-            });
+                tr(if i == 0 {
+                    "pack.openFolder"
+                } else {
+                    "gui.done"
+                })
+            };
             // The cursor follows the mouse; the highlight also keyboard focus.
             crate::widgets::widget_cursor(hover, true);
             d::button(

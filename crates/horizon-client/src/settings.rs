@@ -189,8 +189,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             fov: 70.0,
-            render_distance: 12,
-            simulation_distance: 12,
+            // The browser build's world shares one thread and 2 GiB with the
+            // frame: a nearer horizon by default (the sliders still go up).
+            render_distance: if cfg!(target_arch = "wasm32") { 8 } else { 12 },
+            simulation_distance: if cfg!(target_arch = "wasm32") { 6 } else { 12 },
             sensitivity: 0.5,
             master_volume: 1.0,
             volumes: [1.0; 11],
@@ -208,7 +210,8 @@ impl Default for Settings {
             particles: 0,
             entity_distance: 1.0,
             entity_shadows: true,
-            biome_blend: 2,
+            // 3x3 in the browser: blending is the mesher's dearest sampling.
+            biome_blend: if cfg!(target_arch = "wasm32") { 1 } else { 2 },
             graphics_preset: "fancy".into(),
             mipmap_levels: 4,
             weather_radius: 10,

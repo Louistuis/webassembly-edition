@@ -30,6 +30,21 @@ const browser = await chromium.launch({
     '--disable-vulkan-surface', '--disable-audio-output', '--js-flags=--max-old-space-size=1024'],
 });
 const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+// SEED=file.json ({"/horizon/path": "base64", ...}): files put in the page's
+// storage before it starts, as if the player had added them (mods, packs).
+if (process.env.SEED) {
+  const seed = JSON.parse(fs.readFileSync(process.env.SEED, 'utf8'));
+  await page.addInitScript((files) => {
+    const req = indexedDB.open('horizon-web', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('files');
+    req.onsuccess = () => {
+      const t = req.result.transaction('files', 'readwrite');
+      for (const [path, b64] of Object.entries(files)) {
+        t.objectStore('files').put(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), path);
+      }
+    };
+  }, seed);
+}
 const consoleTail = [];
 page.on('console', (m) => { consoleTail.push(`[${m.type()}] ${m.text().split('\n')[0]}`); if (consoleTail.length > 80) consoleTail.shift(); });
 page.on('pageerror', (e) => consoleTail.push(`[pageerror] ${e.message}`));

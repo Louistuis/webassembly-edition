@@ -424,6 +424,29 @@ impl Screen {
                 let x = ((w - 308.0) / 2.0).floor();
                 let saved = selected.is_some_and(|i| i < servers.len());
                 let label = |key: &str, fallback: &str| crate::lang::get_or(key, fallback);
+                // The browser opens no sockets: only the room's worlds can be
+                // joined, so no addresses to add, edit or type.
+                if cfg!(target_arch = "wasm32") {
+                    return vec![
+                        b(
+                            x,
+                            h - 52.0,
+                            152.0,
+                            &label("selectServer.select", "Join Server"),
+                            selected.is_some(),
+                            40,
+                        ),
+                        b(
+                            x + 156.0,
+                            h - 52.0,
+                            152.0,
+                            &label("selectServer.refresh", "Refresh"),
+                            true,
+                            45,
+                        ),
+                        b(x, h - 28.0, 308.0, &label("gui.back", "Back"), true, 46),
+                    ];
+                }
                 vec![
                     b(
                         x,
@@ -817,10 +840,15 @@ impl Screen {
                         Row::LanHeader => {
                             // LANHeader's LoadingDotsWidget: the label, then
                             // the dots on its last line, both centred.
-                            let label = crate::lang::get_or(
-                                "lanServer.scanning",
-                                "Scanning for games on your local network",
-                            );
+                            // The browser build's "LAN" is the WebSim room.
+                            let label = if cfg!(target_arch = "wasm32") {
+                                "Looking for worlds in this WebSim room".to_owned()
+                            } else {
+                                crate::lang::get_or(
+                                    "lanServer.scanning",
+                                    "Scanning for games on your local network",
+                                )
+                            };
                             let middle = cx + ((ROW_WIDTH - 4.0) / 2.0).floor();
                             let lw = HudBatch::text_width(atlas, &label).ceil();
                             let lx = middle - (lw / 2.0).floor();

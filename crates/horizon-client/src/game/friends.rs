@@ -225,7 +225,10 @@ impl Game<'_> {
         };
         let Some(s) = &self.friends else {
             return FriendsView {
-                shown: self.remote.is_none() || self.integrated.is_some(),
+                // The browser reaches friends through the WebSim room (Open
+                // to LAN), never the relay: no Play with Friends there.
+                shown: !cfg!(target_arch = "wasm32")
+                    && (self.remote.is_none() || self.integrated.is_some()),
                 ..FriendsView::default()
             };
         };

@@ -498,6 +498,18 @@ impl HudAtlas {
         {
             edition.3 = pixels;
         }
+        // WebSim WASM Edition's logo, drawn smaller than it is: sampled linearly.
+        #[cfg(target_arch = "wasm32")]
+        if full && let Some(logo) = crate::web_edition::logo() {
+            flags.insert(
+                logo.0.clone(),
+                TextureFlags {
+                    blur: true,
+                    clamp: true,
+                },
+            );
+            images.push(logo);
+        }
         images.push(("horizon/white".into(), 4, 4, vec![255; 64]));
         if full {
             Self::slots(&mut images, crate::trims::slot_size(root));

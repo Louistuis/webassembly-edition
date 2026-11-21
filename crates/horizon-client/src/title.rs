@@ -239,6 +239,13 @@ fn choose_splash(text: &str, index: usize, date: (u32, u32)) -> Option<String> {
 }
 
 impl Title {
+    /// The browser build's own splashes (`web_edition::SPLASHES`).
+    fn edition_splashes() -> String {
+        #[cfg(target_arch = "wasm32")]
+        return crate::web_edition::splashes();
+        #[cfg(not(target_arch = "wasm32"))]
+        String::new()
+    }
     pub fn new(saves: PathBuf, resources: &Path) -> Self {
         use chrono::Datelike;
         let today = chrono::Local::now();
@@ -261,8 +268,12 @@ impl Title {
             toast: None,
             icons: RefCell::new(std::collections::HashMap::new()),
             splash: choose_splash(
-                &std::fs::read_to_string(resources.join("assets/minecraft/texts/splashes.txt"))
-                    .unwrap_or_default(),
+                &if cfg!(target_arch = "wasm32") {
+                    Self::edition_splashes()
+                } else {
+                    std::fs::read_to_string(resources.join("assets/minecraft/texts/splashes.txt"))
+                        .unwrap_or_default()
+                },
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -706,14 +717,21 @@ impl Title {
                         true,
                         4,
                     ),
-                    b(
-                        cx - 100.0,
-                        y + 48.0,
-                        200.0,
-                        &lang::get_or("menu.online", "Minecraft Realms"),
-                        false,
-                        0,
-                    ),
+                    // The browser build keeps the classic menu: its own
+                    // settings, mods and packs sit where Realms is, and Quit
+                    // Game goes back to the page's start screen.
+                    if cfg!(target_arch = "wasm32") {
+                        b(cx - 100.0, y + 48.0, 200.0, "WASM Edition...", true, 30)
+                    } else {
+                        b(
+                            cx - 100.0,
+                            y + 48.0,
+                            200.0,
+                            &lang::get_or("menu.online", "Minecraft Realms"),
+                            false,
+                            0,
+                        )
+                    },
                     b(
                         cx - 100.0,
                         y + 96.0,
@@ -732,8 +750,9 @@ impl Title {
                     ),
                 ];
                 // CommonButtons' icon buttons; Horizon's Join a Friend (an
-                // invite code) sits behind vanilla's Friends button.
-                for (i, (key, plain, id, icon)) in [
+                // invite code) sits behind vanilla's Friends button. The
+                // browser has no relay to reach a friend through: no Friends.
+                let icons: Vec<_> = [
                     ("gui.friends.open", "Friends", 5, "friends/friends"),
                     ("options.language", "Language...", 6, "icon/language"),
                     (
@@ -744,10 +763,12 @@ impl Title {
                     ),
                 ]
                 .into_iter()
-                .enumerate()
-                {
+                .filter(|i| !(cfg!(target_arch = "wasm32") && i.2 == 5))
+                .collect();
+                let first = cx - 10.0 - (icons.len() as f32 - 1.0) * 12.0;
+                for (i, (key, plain, id, icon)) in icons.into_iter().enumerate() {
                     let mut button = b(
-                        cx - 34.0 + i as f32 * 24.0,
+                        first + i as f32 * 24.0,
                         y + 72.0,
                         20.0,
                         &lang::get_or(key, plain),
@@ -930,7 +951,9 @@ impl Title {
         match &self.mode {
             Mode::Main => {
                 // LogoRenderer: the logo's top 44 of 64 rows, then the edition
-                // banner's top 14 of 16 rows overlapping its bottom by 7.
+                // banner's top 14 of 16 rows overlapping its bottom by 7. The
+                // browser build on WebSim puts its "websim" wordmark before the
+                // banner, the pair centred under the logo.
                 batch.sprite_region(
                     atlas,
                     "gui/title/minecraft",
@@ -938,10 +961,26 @@ impl Title {
                     256.0,
                     64.0,
                 );
+                #[cfg(target_arch = "wasm32")]
+                let banner_x = if crate::web_edition::websim() {
+                    let x = (w / 2.0).floor() - 104.0;
+                    batch.sprite_region(
+                        atlas,
+                        crate::web_edition::LOGO,
+                        [x - 26.0, 30.0 + 44.0 - 10.0, 128.0, 28.0],
+                        128.0,
+                        28.0,
+                    );
+                    x + 80.0
+                } else {
+                    (w / 2.0).floor() - 64.0
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                let banner_x = (w / 2.0).floor() - 64.0;
                 batch.sprite_region(
                     atlas,
                     crate::title_edition::SPRITE,
-                    [(w / 2.0).floor() - 64.0, 30.0 + 44.0 - 7.0, 128.0, 14.0],
+                    [banner_x, 30.0 + 44.0 - 7.0, 128.0, 14.0],
                     128.0,
                     16.0,
                 );
@@ -972,11 +1011,14 @@ impl Title {
                         ];
                     }
                 }
-                let version = if cfg!(target_arch = "wasm32") {
-                    format!("WebAssembly Edition {}", horizon_core::VANILLA_VERSION)
-                } else {
-                    format!("Horizon {} (Rust)", horizon_core::VANILLA_VERSION)
-                };
+                #[cfg(target_arch = "wasm32")]
+                let version = format!(
+                    "{} {}",
+                    crate::web_edition::name(),
+                    horizon_core::VANILLA_VERSION
+                );
+                #[cfg(not(target_arch = "wasm32"))]
+                let version = format!("Horizon {} (Rust)", horizon_core::VANILLA_VERSION);
                 batch.text(atlas, &version, 2.0, h - 10.0, u32::MAX, true);
                 // A nightly names its build in the top-left corner, the one spot no button reaches at any GUI
                 // scale, so screenshots and reports say which build they come from.
@@ -1366,6 +1408,13 @@ impl Title {
                 self.enter_singleplayer();
                 Action::None
             }
+            // A tab has no window to close: the page takes over again.
+            #[cfg(target_arch = "wasm32")]
+            (Mode::Main, Some(2)) => {
+                crate::web_edition::quit();
+                Action::None
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             (Mode::Main, Some(2)) => Action::Quit,
             (Mode::Main, Some(4)) => {
                 self.mode = Mode::Multiplayer(crate::multiplayer::Screen::list(&self.saves));
@@ -1384,6 +1433,11 @@ impl Title {
                 Action::None
             }
             (Mode::Main, Some(3)) => Action::Options,
+            #[cfg(target_arch = "wasm32")]
+            (Mode::Main, Some(30)) => {
+                crate::web_edition::open("settings", false);
+                Action::None
+            }
             (Mode::Main, Some(7)) => Action::Accessibility,
             (Mode::Main, Some(6)) => Action::Language,
             (Mode::Select { worlds, selected }, Some(10)) => {

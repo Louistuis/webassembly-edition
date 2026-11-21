@@ -1,7 +1,13 @@
 # Horizon: a map for agents
 
+> **This repository is Minecraft WebSim WASM Edition** (Louis's browser build, `web/`, [docs/web.md](docs/web.md)),
+> built on Horizon. The map below is Horizon's and still holds for the engine. Our own rules: never commit
+> Mojang's files; browser-only code goes in `web/` or behind `cfg(target_arch = "wasm32")`; test the browser
+> build headless under a memory limit, never in a browser on a small machine. Horizon's contributor guide is
+> [docs/horizon/CONTRIBUTING.md](docs/horizon/CONTRIBUTING.md).
+
 Minecraft: Java Edition 26.3 rewritten in Rust (wgpu). Vanilla is the specification wherever it has the
-feature. Read [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
+feature. Read [docs/horizon/CONTRIBUTING.md](docs/horizon/CONTRIBUTING.md) once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
 
 ## Rules that bite

@@ -1,6 +1,8 @@
-# WebAssembly Edition: the browser build
+# Minecraft WebSim WASM Edition: the browser build
 
 The game client compiled to `wasm32-unknown-unknown`, rendering with WebGPU, played in a browser tab.
+On WebSim it is *Minecraft WebSim WASM Edition*; on minecraft.lou15.com the same page is *Minecraft WASM
+Edition* (the page picks the brand from its host: `wasmEdition.isWebSim()`, `?brand=plain|websim` to force).
 It runs the same code as the native client; the differences below are all behind
 `cfg(target_arch = "wasm32")` or in `web/`.
 
@@ -8,12 +10,14 @@ It runs the same code as the native client; the differences below are all behind
 
 | Piece | Where |
 |---|---|
-| Start screen, boot, browser storage | `web/page/` (`index.html`, `start.css`, `boot.js`) |
+| Start screen, boot, browser storage | `web/page/` (`index.html`, `start.css`, `boot.js`, `store.js`) |
+| The edition's own pages: settings, mods and packs, worlds, credits | `web/page/edition.js` (`wasmEdition.open(tab, inWorld)`), opened from the game's title screen and options (`crates/horizon-client/src/web_edition.rs`) |
+| Logo | `web/page/logo.png`, rendered by `web/brand/logo.py` (only the word "websim" is Comic Sans; the rest is pixel lettering) |
 | std for the page: clock, console, files, arguments | `web/std/` (`apply.py` patches the toolchain's library sources, `sys/*.rs` replace four platform modules), `web/page/std.js` (the page's side) |
 | Build | `web/build.sh fast` (cargo `-Zbuild-std`, then `wasm-bindgen --target web`) into `web/dist/` |
 | Game files | `web/pack.py PREPARED OUT` packs a prepared `.local/horizon-client/26.3` into gzip chunks + `index.json` |
 | Tests | `web/test/` (Playwright, headless Chrome with SwiftShader) |
-| Publish to WebSim | `web/publish.sh PROJECT "message"`; `web/files-worker/` is the locked file host |
+| Publish | `web/publish.sh PROJECT "message"`: WebSim, the locked file host (`web/files-worker/`) and the site Worker on minecraft.lou15.com |
 
 ## What is different in the browser
 
@@ -50,8 +54,17 @@ It runs the same code as the native client; the differences below are all behind
   1 block a tick (20% more per Speed level) with 60 blocks saved up, or is sent back.
   `web/test/cheats.mjs` flies, dashes and spams as a cheating guest would. Room messages still reach
   every member, so what players send each other is not private from others in the room.
+- **Menus** show what works in a tab: the title screen has WASM Edition... and Credits where Realms and
+  Quit Game are, no Friends (no relay); Multiplayer lists only the room's worlds; Options has WASM Edition
+  Settings (graphics, shader packs, mods, extras, controller, and the page's own pages), sound greyed out,
+  and "open folder" buttons open the page's upload panel instead.
+- **Mods and packs** (beta): files the player adds through the panel land in `horizon-mods/`,
+  `resourcepacks/` and `shaderpacks/` and apply on the next start. Content mods load (their resource
+  overlay is built from hard links, which the page's file system supports); mods with code don't run (no
+  wasmtime in a tab). Horizon's own shader packs compile to WGSL through naga like on desktop.
 - **No sound yet.**
-- The title screen reads "WASM EDITION" and "WebAssembly Edition 26.3".
+- The title screen shows the game's logo, then "websim" (WebSim only) beside the pixel "WASM EDITION"
+  banner, our own splashes, and "Minecraft WebSim WASM Edition 26.3" in the corner.
 
 ## Build and test
 
@@ -73,5 +86,6 @@ Run them under a memory limit, for example `systemd-run --scope -p MemoryMax=3G`
 ## Mojang's files
 
 The packed game files are Mojang's. They never go into this repository or onto a public page: the
-WebSim project holds only the page and the code, and the files come from a Cloudflare Worker that
-serves them only with an access key and only to websim.com pages.
+WebSim project and the site Worker hold only the page and the code, and the files come from a Cloudflare
+Worker that serves them only with the access key and only to the page's two homes (websim.com and
+minecraft.lou15.com). WebSim gives a page no proof of who is playing, so the key stays the gate.

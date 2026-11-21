@@ -850,6 +850,9 @@ fn link(target: &Path, at: &Path) -> std::io::Result<()> {
             link(&entry.path(), &at.join(entry.file_name()))?;
         }
         Ok(())
+    } else if cfg!(target_arch = "wasm32") {
+        // The browser's in-memory files: a hard link shares the bytes.
+        fs::hard_link(target, at)
     } else {
         fs::copy(target, at).map(|_| ())
     }
@@ -1282,7 +1285,13 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
         ))
     };
     let mut parts = vec!["horizon mod content 1".to_owned()];
-    parts.push(meta(&std::env::current_exe()?)?);
+    // The browser has no executable file: its root lives only as long as the
+    // page (the cache folder is not kept), so the game's version will do.
+    if cfg!(target_arch = "wasm32") {
+        parts.push(env!("CARGO_PKG_VERSION").to_owned());
+    } else {
+        parts.push(meta(&std::env::current_exe()?)?);
+    }
     let base = std::path::absolute(base)?;
     parts.push(
         String::from_utf8_lossy(&fs::read(base.join("horizon-resources.json"))?).into_owned(),

@@ -258,15 +258,67 @@ pub(super) fn content_root(
 /// A build without the `mods` feature: no mod runs.
 #[cfg(not(feature = "mods"))]
 impl Game<'_> {
-    /// Says why the installed and dev mods don't run.
+    /// Lists the installed mods for the Mods page and says why their code
+    /// doesn't run. Content mods (blocks, items, data) still load: their
+    /// content goes into the resources at start (`content_root`), so turning
+    /// one on applies after a restart. The browser build is such a build.
     pub(super) fn start_mods(&mut self) {
+        use horizon_client::mod_list::Installed;
         let dir = Self::options_path().with_file_name(mod_list::DIR);
-        let found = horizon_mods::find(&dir).len() + self.mods.dev.len();
+        let paths = horizon_mods::find(&dir);
+        let found = paths.len() + self.mods.dev.len();
         if found > 0 {
             log::warn!(
                 "Horizon: {found} mod(s) not started: this build has no mod runtime (build with --features mods)"
             );
         }
+        let code = if cfg!(target_arch = "wasm32") {
+            "Mods with code don't run in the browser yet"
+        } else {
+            "This build runs no mod code"
+        };
+        self.settings.mods.installed = paths
+            .iter()
+            .map(|path| {
+                let file = path.file_name().unwrap_or_default().to_string_lossy();
+                match horizon_mods::Package::read(path) {
+                    Ok(package) => {
+                        let m = &package.manifest;
+                        let content = m
+                            .capabilities
+                            .contains(&horizon_mods::Capability::Registries);
+                        let problem = match (content, package.wasm.is_some()) {
+                            (true, false) => None,
+                            (true, true) => {
+                                Some(format!("{code}: only its blocks and items load."))
+                            }
+                            (false, _) => Some(format!("{code}.")),
+                        };
+                        Installed {
+                            id: m.id.clone(),
+                            title: format!("{} {}", m.name, m.version),
+                            description: format!(
+                                "{} Turning it on or off applies after a restart.",
+                                m.description
+                            )
+                            .trim()
+                            .to_owned(),
+                            problem,
+                            dev: false,
+                            has_settings: false,
+                        }
+                    }
+                    Err(e) => Installed {
+                        id: String::new(),
+                        title: file.into_owned(),
+                        description: String::new(),
+                        problem: Some(format!("Can't be read: {e}")),
+                        dev: false,
+                        has_settings: false,
+                    },
+                }
+            })
+            .collect();
     }
     pub(super) fn merge_remote_tree(&mut self) {}
     pub(super) fn sync_mods(&mut self) {}

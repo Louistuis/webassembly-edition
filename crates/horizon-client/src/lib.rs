@@ -152,6 +152,8 @@ pub mod sculk;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 #[cfg(target_arch = "wasm32")]
+pub mod web_edition;
+#[cfg(target_arch = "wasm32")]
 pub mod web_net;
 pub use horizon_server_files as server;
 pub mod server_packs;
