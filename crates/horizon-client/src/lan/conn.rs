@@ -451,6 +451,16 @@ pub fn serve_local(
     serve_connection(Connection::local(pipe), address, shared)
 }
 
+/// A player from elsewhere over an in-memory pipe (the browser build's
+/// WebSim players, docs/web.md), served as an accepted socket from `address`.
+pub fn serve_pipe(
+    pipe: horizon_protocol::connection::Pipe,
+    address: std::net::SocketAddr,
+    shared: Arc<Shared>,
+) -> Result<(), String> {
+    serve_connection(Connection::local(pipe), address, shared)
+}
+
 fn serve_connection(
     mut c: Connection,
     address: std::net::SocketAddr,

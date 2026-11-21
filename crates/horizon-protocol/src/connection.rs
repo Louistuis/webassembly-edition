@@ -61,6 +61,16 @@ impl Pipe {
             timeout: Mutex::new(*self.timeout.lock().unwrap()),
         }
     }
+    /// What arrived and was not read yet, without waiting; `None` once the
+    /// pipe is closed and nothing is left (the browser build's bridge reads
+    /// this way, docs/web.md).
+    pub fn try_read(&self) -> Option<Vec<u8>> {
+        let mut state = self.end.incoming.state.lock().unwrap();
+        if state.0.is_empty() && state.1 {
+            return None;
+        }
+        Some(state.0.drain(..).collect())
+    }
     /// Close both directions: reads at either end then see the end of the stream.
     pub fn shutdown(&self) {
         self.end.incoming.close();

@@ -28,3 +28,20 @@ pub fn init() {
         log::set_max_level(log::LevelFilter::Info);
     }
 }
+
+/// Agent-control commands from the page (`horizon.command(line)`, tests): the
+/// game answers them between frames as it answers its control socket's.
+pub static COMMANDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Their replies (JSON), oldest first, for `horizon_replies`.
+pub static REPLIES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn horizon_command(line: &str) {
+    COMMANDS.lock().unwrap().push(line.to_owned());
+}
+
+/// The replies since the last call, one per line.
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn horizon_replies() -> String {
+    std::mem::take(&mut *REPLIES.lock().unwrap()).join("\n")
+}

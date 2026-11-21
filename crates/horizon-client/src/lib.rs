@@ -7,6 +7,8 @@ extern crate horizon_web_ureq as ureq;
 pub mod advancements;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
+#[cfg(target_arch = "wasm32")]
+pub mod web_net;
 pub mod ambience;
 pub mod animate_tick;
 pub mod arrows;

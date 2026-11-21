@@ -100,46 +100,77 @@ impl io::Write for Stdout {
         self.write_vectored(bufs).map(|_| ())
     }""")
 
-    # One thread; sleeping waits on the clock (rare: the game never sleeps on the page's thread).
-    edit(sysdir / "thread/unsupported.rs",
-         "    Err(io::Error::UNKNOWN_THREAD_COUNT)",
-         "    Ok(NonZero::new(1).unwrap())")
-    edit(sysdir / "thread/unsupported.rs",
-         'pub fn sleep(_dur: Duration) {\n    panic!("can\'t sleep");\n}',
-         """pub fn sleep(dur: Duration) {
-    let end = crate::sys::horizon_web::now() + dur.as_secs_f64() * 1000.0;
-    while crate::sys::horizon_web::now() < end {}
-}""")
+    # Threads: inline, coroutines (JSPI) or refused (sys/horizon_web.rs), and
+    # the locks, condition variables and parking the coroutines wait in.
+    shutil.copy(HERE / "sys/thread.rs", sysdir / "thread/unsupported.rs")
+    shutil.copy(HERE / "sys/mutex.rs", sysdir / "sync/mutex/no_threads.rs")
+    shutil.copy(HERE / "sys/rwlock.rs", sysdir / "sync/rwlock/no_threads.rs")
+    shutil.copy(HERE / "sys/condvar.rs", sysdir / "sync/condvar/no_threads.rs")
+    shutil.copy(HERE / "sys/parker.rs", sysdir / "sync/thread_parking/unsupported.rs")
+    # Each coroutine has its own current thread: swapped in and out.
+    edit(lib / "std/src/thread/current.rs",
+         """            pub(super) fn set(id: ThreadId) {
+                ID.set(Some(id))
+            }
+""",
+         """            pub(super) fn set(id: ThreadId) {
+                ID.set(Some(id))
+            }
 
-    # Scoped threads, and plain ones that are a piece of work the caller waits
-    # for, run on the calling thread, at spawn; the game's long-running threads
-    # still fail to spawn (horizon_web::LONG_RUNNING; the game handles each).
-    edit(sysdir / "thread/unsupported.rs",
-         "pub struct Thread(!);",
-         "pub struct Thread(());\n\nimpl Thread {\n    /// A scoped thread that already ran on the calling thread.\n    pub fn finished() -> Thread {\n        Thread(())\n    }\n}")
-    edit(sysdir / "thread/unsupported.rs",
-         "    pub fn join(self) {\n        self.0\n    }",
-         "    pub fn join(self) {}")
+            /// Horizon's browser build: trade the id for a coroutine's (as two halves).
+            pub(super) fn horizon_swap_id(saved: &mut [*mut (); 2]) {
+                let old = ID.get().map_or(0, |id| id.as_u64().get());
+                let new = (saved[0].addr() as u64) | ((saved[1].addr() as u64) << 32);
+                ID.set(ThreadId::from_u64(new));
+                *saved = [
+                    ptr::without_provenance_mut(old as u32 as usize),
+                    ptr::without_provenance_mut((old >> 32) as usize),
+                ];
+            }
+""")
+    edit(lib / "std/src/thread/current.rs",
+         "pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {",
+         """/// Horizon's browser build (docs/web.md): trade the current thread's state
+/// for a coroutine thread's (sys/horizon_web.rs).
+#[cfg(all(target_family = "wasm", target_os = "unknown", not(target_feature = "atomics")))]
+pub(crate) fn horizon_swap(saved: &mut [*mut (); 3]) {
+    let current = CURRENT.get();
+    CURRENT.set(saved[0]);
+    saved[0] = current;
+    let mut id = [saved[1], saved[2]];
+    self::id::horizon_swap_id(&mut id);
+    saved[1] = id[0];
+    saved[2] = id[1];
+}
+
+pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {""")
+    edit(lib / "std/src/thread/mod.rs",
+         "pub(crate) use current::{current_or_unnamed, current_os_id, drop_current, with_current_name};",
+         """pub(crate) use current::{current_or_unnamed, current_os_id, drop_current, with_current_name};
+#[cfg(all(target_family = "wasm", target_os = "unknown", not(target_feature = "atomics")))]
+pub(crate) use current::horizon_swap;""")
     edit(lib / "std/src/thread/lifecycle.rs",
          "    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });\n",
          """    let init = Box::new(ThreadInit { handle: thread.clone(), rust_start });
 
-    // Horizon's browser build: no threads, so a scoped thread's work, or a
-    // plain thread that is not one of the game's loops, runs here, now; the
-    // caller then finds it finished.
+    // Horizon's browser build: no OS threads. Work the caller waits for runs
+    // here, now; the network's threads run as coroutines; the game's other
+    // long-running loops fail to start (sys/horizon_web.rs, `spawn_mode`).
     #[cfg(all(target_family = "wasm", target_os = "unknown", not(target_feature = "atomics")))]
-    if my_packet.scope.is_some() || crate::sys::horizon_web::runs_inline(thread.name()) {
-        let ThreadInit { rust_start, .. } = *init;
-        rust_start();
-        return Ok(JoinInner { native: imp::Thread::finished(), thread, packet: my_packet });
+    match crate::sys::horizon_web::spawn_mode(my_packet.scope.is_some(), thread.name()) {
+        crate::sys::horizon_web::Spawn::Inline => {
+            let ThreadInit { rust_start, .. } = *init;
+            rust_start();
+            return Ok(JoinInner { native: imp::Thread::finished(), thread, packet: my_packet });
+        }
+        crate::sys::horizon_web::Spawn::Coroutine => {
+            let native = imp::Thread::coroutine(init, stack_size);
+            return Ok(JoinInner { native, thread, packet: my_packet });
+        }
+        crate::sys::horizon_web::Spawn::Refuse => {}
     }
 """)
 
-    # Waiting for another thread can never end on the only thread: say so
-    # (and where) instead of spinning forever.
-    edit(sysdir / "sync/thread_parking/unsupported.rs",
-         "    pub unsafe fn park(self: Pin<&Self>) {}",
-         '    pub unsafe fn park(self: Pin<&Self>) {\n        panic!("Horizon web: this waits for another thread, which the browser build cannot run");\n    }')
 
     # The working directory the in-memory file system resolves relative paths against.
     edit(sysdir / "paths/unsupported.rs",

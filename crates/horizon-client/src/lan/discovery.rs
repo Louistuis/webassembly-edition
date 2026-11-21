@@ -147,6 +147,10 @@ impl Scanner {
     /// The worlds announced since the scan started, in order (vanilla's
     /// list keeps them while the multiplayer screen is open).
     pub fn games(&self) -> Vec<LanGame> {
+        // The browser build: the worlds hosted in the WebSim room (docs/web.md).
+        #[cfg(target_arch = "wasm32")]
+        return crate::web_net::games();
+        #[cfg(not(target_arch = "wasm32"))]
         self.inner.games.lock().unwrap().clone()
     }
 }

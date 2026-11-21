@@ -2,4 +2,4 @@
 # The game's memory is capped at 2 GiB: past that an allocation fails in the game
 # instead of the tab taking the whole machine's memory with it.
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg", 'getrandom_backend="wasm_js"', "-C", "link-arg=--max-memory=2147483648"]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"', "-C", "link-arg=--max-memory=2147483648", "-C", "link-arg=--export=__stack_pointer"]

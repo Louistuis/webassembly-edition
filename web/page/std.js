@@ -88,3 +88,76 @@ export function fs_forget(ptr, len) {
   }
   state.onForget?.(path);
 }
+
+// ---- coroutine threads (web/std/sys/horizon_web.rs) ----
+// With JSPI a call into the game can pause and resume later on its own engine
+// stack. Each coroutine runs `horizon_thread_main` through
+// WebAssembly.promising, on its own shadow stack (`__stack_pointer`, switched
+// here); `thread_suspend` pauses it until `thread_wake` or a timeout.
+// Coroutines start and resume only from an empty stack (timers and promise
+// jobs), where the shadow stack pointer is at its base.
+const JSPI = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
+const coroutines = new Map();
+let stackPointer = null;
+let stackBase = 0;
+let runThread = null;
+
+// boot.js, once the module is up.
+export function useExports(exports) {
+  if (!JSPI || !exports.__stack_pointer || !exports.horizon_thread_main) return;
+  stackPointer = exports.__stack_pointer;
+  stackBase = stackPointer.value;
+  runThread = WebAssembly.promising(exports.horizon_thread_main);
+}
+
+export function thread_support() { return JSPI ? 1 : 0; }
+
+export function thread_spawn(id, stackTop) {
+  coroutines.set(id, { sp: stackTop, woken: false, wake: null, timer: 0 });
+  setTimeout(() => {
+    stackPointer.value = coroutines.get(id).sp;
+    let running;
+    try {
+      running = runThread(id);
+    } finally {
+      stackPointer.value = stackBase;
+    }
+    running.catch((e) => globalThis.console.error(`Horizon: thread ${id} failed`, e));
+  }, 0);
+}
+
+async function suspend(id, timeout) {
+  const co = coroutines.get(id);
+  co.sp = stackPointer.value;
+  stackPointer.value = stackBase;
+  if (timeout === -2) {
+    // Finished: never resumes; its stack goes with the promise.
+    coroutines.delete(id);
+    return new Promise(() => {});
+  }
+  let woken;
+  if (co.woken) {
+    co.woken = false;
+    woken = await 1;
+  } else {
+    woken = await new Promise((resolve) => {
+      co.wake = resolve;
+      if (timeout >= 0) co.timer = setTimeout(() => resolve(0), timeout);
+    });
+  }
+  clearTimeout(co.timer);
+  co.wake = null;
+  stackPointer.value = co.sp;
+  return woken;
+}
+export const thread_suspend = JSPI ? new WebAssembly.Suspending(suspend) : () => 0;
+
+export function thread_wake(id) {
+  const co = coroutines.get(id);
+  if (!co) return;
+  if (co.wake) {
+    const wake = co.wake;
+    co.wake = null;
+    wake(1);
+  } else co.woken = true;
+}

@@ -2,7 +2,9 @@
 // restores the player's saved files from the browser's storage, then hands
 // both to the game through std's file system (std.js) and starts it.
 import init, { horizon_start } from './horizon.js';
-import { state, lines } from './std.js';
+import * as game from './horizon.js';
+import { startNet } from './net.js';
+import { state, lines, useExports } from './std.js';
 
 const RESOURCES = '/horizon/.local/horizon-client/26.3/';
 // The game files: beside the page in tests, or on the locked file host that
@@ -370,6 +372,11 @@ async function main() {
   }
   const wasm = await init({ module_or_path: module });
   state.memory = wasm.memory;
+  useExports(wasm);
+  startNet(game);
+  // Tests drive the game with its agent-control commands (docs/agent-control.md).
+  globalThis.horizon.command = game.horizon_command;
+  globalThis.horizon.replies = game.horizon_replies;
   // The start screen gives way once the game's canvas is on the page.
   new MutationObserver((_, observer) => {
     if (document.querySelector('body > canvas')) {

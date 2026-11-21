@@ -448,8 +448,22 @@ impl Lan {
                 "already listening",
             ));
         }
-        let listener = Self::bind(self.shared.config.bind, port)?;
-        self.listen_on(listener, announce)
+        #[cfg(target_arch = "wasm32")]
+        {
+            // The browser build (docs/web.md): the room's players come in
+            // through WebSim instead of a socket; the port is for show.
+            let _ = (port, announce);
+            crate::web_net::host(self.shared.clone(), &self.shared.motd());
+            // A thread handle that is already finished stands for the accept loop.
+            self.listener = Some(std::thread::spawn(|| {}));
+            self.port = 25565;
+            return Ok(self.port);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let listener = Self::bind(self.shared.config.bind, port)?;
+            self.listen_on(listener, announce)
+        }
     }
     /// The socket [`Lan::listen`] accepts on, bound ahead so that a failure
     /// can be reported before the hub is at hand.
@@ -486,6 +500,10 @@ impl Lan {
     /// Stop accepting connections and announcing; connections already in
     /// (the local one included) stay.
     pub fn stop_listening(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if self.listener.is_some() {
+            crate::web_net::stop_hosting();
+        }
         self.listener_stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.listener.take() {
             let _ = t.join();

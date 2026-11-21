@@ -367,6 +367,13 @@ fn run(
     cookies: &Cookies,
     transferred: bool,
 ) -> Result<String, String> {
+    #[cfg(target_arch = "wasm32")]
+    let local = local.or_else(|| {
+        // The browser build: a world hosted in the WebSim room (docs/web.md).
+        let peer = address.strip_prefix(crate::web_net::SCHEME)?;
+        status(send, "Connecting to the server...");
+        Some(crate::web_net::connect(peer))
+    });
     let (host, port, mut c) = if let Some(pipe) = local {
         (address.to_owned(), 0, Connection::local(pipe))
     } else {

@@ -13632,6 +13632,23 @@ impl ApplicationHandler for Game<'_> {
         // since a headless page's screenshots do not show the WebGPU canvas.
         #[cfg(target_arch = "wasm32")]
         {
+            // The page's control commands (horizon_client::web::COMMANDS).
+            static WAITING: std::sync::Mutex<Vec<std::sync::mpsc::Receiver<String>>> =
+                std::sync::Mutex::new(Vec::new());
+            let lines = std::mem::take(&mut *horizon_client::web::COMMANDS.lock().unwrap());
+            for line in lines {
+                let (reply, answer) = std::sync::mpsc::channel();
+                self.answer(horizon_client::control::Request { line, reply }, event_loop);
+                WAITING.lock().unwrap().push(answer);
+            }
+            WAITING.lock().unwrap().retain(|answer| match answer.try_recv() {
+                Ok(text) => {
+                    horizon_client::web::REPLIES.lock().unwrap().push(text);
+                    false
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+            });
             static LAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
             let mut last = LAST.lock().unwrap();
             if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {

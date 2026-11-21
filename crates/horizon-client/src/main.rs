@@ -27,6 +27,16 @@ extern "C" {
     pub(crate) fn page_fail(message: &str);
 }
 
+/// The page starts coroutine thread `id` here (web/page/std.js, docs/web.md).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn horizon_thread_main(id: u32) {
+    unsafe extern "C" {
+        fn horizon_std_thread_main(id: u32);
+    }
+    unsafe { horizon_std_thread_main(id) }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn horizon_start() {

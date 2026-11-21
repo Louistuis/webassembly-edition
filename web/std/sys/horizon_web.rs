@@ -108,9 +108,198 @@ const LONG_RUNNING: &[&str] = &[
     "download-queue",
 ];
 
-pub fn runs_inline(name: Option<&str>) -> bool {
-    match name {
-        Some(name) => !LONG_RUNNING.iter().any(|loop_name| name.starts_with(loop_name)),
-        None => true,
+/// The threads that run as coroutines (below) where the browser can pause a
+/// call (JSPI): the network's, which spend their time waiting for bytes.
+const COROUTINES: &[&str] = &[
+    "horizon-net",
+    "horizon-local-conn",
+    "horizon-lan-accept",
+    "horizon-lan-conn",
+    "horizon-web-",
+];
+
+/// How a new thread runs in the page.
+pub enum Spawn {
+    /// Now, on the calling thread: work the caller waits for.
+    Inline,
+    /// As a coroutine thread.
+    Coroutine,
+    /// Not at all: the spawn fails, as on a platform without threads.
+    Refuse,
+}
+
+pub fn spawn_mode(scoped: bool, name: Option<&str>) -> Spawn {
+    let name = name.unwrap_or("");
+    if supported() && (running() != 0 || COROUTINES.iter().any(|c| name.starts_with(c))) {
+        // A coroutine's own helpers (a connection's reader and writer) are
+        // coroutines too: they wait as much as it does.
+        Spawn::Coroutine
+    } else if scoped || !LONG_RUNNING.iter().any(|loop_name| name.starts_with(loop_name)) {
+        Spawn::Inline
+    } else {
+        Spawn::Refuse
+    }
+}
+
+// ---- coroutine threads ----
+//
+// With JSPI (WebAssembly.Suspending / WebAssembly.promising) a call into the
+// game can pause where it waits and resume later, on its own engine stack,
+// while the page's thread goes on. Each such thread gets its own shadow stack
+// (std.js switches `__stack_pointer`) and its own std thread state (the
+// current thread, swapped in and out here). They take turns: one runs at a
+// time, and only gives way where it waits (locks, condition variables,
+// parking, sleeping, joining). The page's own thread never pauses: where it
+// would have to wait for a coroutine, that is a bug, and it panics saying so.
+
+#[link(wasm_import_module = "horizon_std")]
+unsafe extern "C" {
+    /// 1 when the browser can pause a call (JSPI).
+    fn thread_support() -> u32;
+    /// Start coroutine `id` soon, with its shadow stack's top at `stack_top`.
+    fn thread_spawn(id: u32, stack_top: usize);
+    /// Pause coroutine `id` (a JSPI import) until woken or `timeout_ms` passed
+    /// (negative: no timeout; -2: never again, the thread finished). 1 when woken.
+    fn thread_suspend(id: u32, timeout_ms: f64) -> u32;
+    /// Wake coroutine `id` (or have its next pause return at once).
+    fn thread_wake(id: u32);
+}
+
+struct Coroutine {
+    init: Option<crate::boxed::Box<crate::thread::ThreadInit>>,
+    /// The thread state of the side not running (see `swap`).
+    state: [*mut (); 3],
+    _stack: crate::vec::Vec<u8>,
+    finished: bool,
+    /// A coroutine waiting in `join` for this one.
+    joiner: u32,
+}
+
+struct Shared<T>(crate::cell::UnsafeCell<T>);
+unsafe impl<T> Sync for Shared<T> {}
+impl<T> Shared<T> {
+    #[allow(clippy::mut_from_ref)]
+    fn get(&self) -> &mut T {
+        // One thread at a time, and no reference is kept across a pause.
+        unsafe { &mut *self.0.get() }
+    }
+}
+
+static TABLE: Shared<crate::vec::Vec<*mut Coroutine>> = Shared(crate::cell::UnsafeCell::new(crate::vec::Vec::new()));
+static RUNNING: Shared<u32> = Shared(crate::cell::UnsafeCell::new(0));
+static SUPPORT: Shared<u8> = Shared(crate::cell::UnsafeCell::new(2));
+/// Coroutines waiting for a lock to come free.
+static LOCK_WAITERS: Shared<crate::vec::Vec<u32>> = Shared(crate::cell::UnsafeCell::new(crate::vec::Vec::new()));
+
+pub fn supported() -> bool {
+    let s = SUPPORT.get();
+    if *s == 2 {
+        *s = unsafe { thread_support() } as u8;
+    }
+    *s == 1
+}
+
+/// The coroutine running now; 0 for the page's own thread.
+pub fn running() -> u32 {
+    *RUNNING.get()
+}
+
+fn coroutine(id: u32) -> &'static mut Coroutine {
+    unsafe { &mut *TABLE.get()[id as usize - 1] }
+}
+
+pub fn spawn(init: crate::boxed::Box<crate::thread::ThreadInit>, stack_size: usize) -> u32 {
+    let size = stack_size.max(1 << 20);
+    let mut stack = crate::vec::Vec::new();
+    stack.resize(size, 0u8);
+    let top = (stack.as_ptr() as usize + size) & !15;
+    let co = crate::boxed::Box::new(Coroutine {
+        init: Some(init),
+        state: [crate::ptr::null_mut(); 3],
+        _stack: stack,
+        finished: false,
+        joiner: 0,
+    });
+    let table = TABLE.get();
+    table.push(crate::boxed::Box::into_raw(co));
+    let id = table.len() as u32;
+    unsafe { thread_spawn(id, top) };
+    id
+}
+
+/// The page starts coroutine `id` here (std.js), on its own stack, through
+/// the game's `horizon_thread_main` export (std's own symbols are not exported).
+#[unsafe(no_mangle)]
+pub extern "C" fn horizon_std_thread_main(id: u32) {
+    let co = coroutine(id);
+    let init = co.init.take().expect("a coroutine starts once");
+    *RUNNING.get() = id;
+    // In with no thread state of its own; `init` sets the current thread.
+    crate::thread::horizon_swap(&mut co.state);
+    let start = init.init();
+    start();
+    let co = coroutine(id);
+    co.finished = true;
+    if co.joiner != 0 {
+        wake(co.joiner);
+    }
+    crate::thread::horizon_swap(&mut co.state);
+    *RUNNING.get() = 0;
+    unsafe { thread_suspend(id, -2.0) };
+    unreachable!("a finished coroutine resumed");
+}
+
+/// Pause the running coroutine until woken or `timeout_ms` passed (negative:
+/// no timeout). Whether it was woken.
+pub fn pause(timeout_ms: f64) -> bool {
+    let id = running();
+    assert!(id != 0, "Horizon web: the page's own thread cannot wait");
+    crate::thread::horizon_swap(&mut coroutine(id).state);
+    *RUNNING.get() = 0;
+    let woken = unsafe { thread_suspend(id, timeout_ms) } != 0;
+    *RUNNING.get() = id;
+    crate::thread::horizon_swap(&mut coroutine(id).state);
+    woken
+}
+
+pub fn wake(id: u32) {
+    unsafe { thread_wake(id) }
+}
+
+/// Wait until coroutine `id` finished.
+pub fn join(id: u32) {
+    if coroutine(id).finished {
+        return;
+    }
+    let me = running();
+    assert!(me != 0, "Horizon web: the page's own thread joins a thread that is still running");
+    coroutine(id).joiner = me;
+    while !coroutine(id).finished {
+        pause(-1.0);
+    }
+}
+
+pub fn finished(id: u32) -> bool {
+    coroutine(id).finished
+}
+
+/// A lock is held by someone else: the running coroutine waits for it to
+/// come free (the page's own thread cannot).
+pub fn wait_for_lock() {
+    if running() == 0 {
+        panic!("Horizon web: the page's own thread needs a lock that a paused thread holds");
+    }
+    LOCK_WAITERS.get().push(running());
+    pause(-1.0);
+}
+
+/// A lock came free: the coroutines waiting for one try again.
+#[inline]
+pub fn lock_freed() {
+    let waiters = LOCK_WAITERS.get();
+    if !waiters.is_empty() {
+        for id in crate::mem::take(waiters) {
+            wake(id);
+        }
     }
 }
