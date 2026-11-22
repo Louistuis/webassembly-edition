@@ -8,6 +8,10 @@
 #          access key and only to the page's two copies. Never on a public page.
 #   site   the same page on Louis's own domain (SITE_DOMAIN, default
 #          minecraft.lou15.com; - to skip), a Worker of static assets.
+#   cloud  cloud saves (web/cloud/server.js). On WebSim it is the project's own
+#          server, synced with the page. For the site it runs on nc2
+#          (CLOUD_URL; web/cloud/deploy-nc2.sh installs it), which also gets
+#          the game files (NC2=- to skip).
 #
 # Both stages live on Louis-RAID, never in this repository. The access key is
 # made once, in .local/websim-access-key (git-ignored).
@@ -23,6 +27,7 @@ PROJECT=${1:?project id, or - to stage only}
 MESSAGE=${2:-update}
 WORKER=wasm-edition-files
 FILES_URL=${FILES_URL:-https://wasm-edition-files.nc-status.workers.dev/}
+CLOUD_URL=${CLOUD_URL:-https://mc-cloud.lou15.com}
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/page" "$STAGE/files"
@@ -49,11 +54,11 @@ if [ "$PROJECT" = "-" ]; then
 fi
 
 # The page learns where the files are.
-python3 - "$STAGE/page/index.html" "$FILES_URL" <<'PY'
+python3 - "$STAGE/page/index.html" "$FILES_URL" "$CLOUD_URL" <<'PY'
 import sys
-path, url = sys.argv[1], sys.argv[2]
+path, url, cloud = sys.argv[1], sys.argv[2], sys.argv[3]
 html = open(path).read()
-tag = f'<script>globalThis.HORIZON_FILES = "{url}";</script>\n'
+tag = f'<script>globalThis.HORIZON_FILES = "{url}"; globalThis.HORIZON_CLOUD = "{cloud}";</script>\n'
 html = html.replace('<script type="importmap">', tag + '<script type="importmap">', 1)
 open(path, "w").write(html)
 PY
@@ -80,8 +85,16 @@ if [ "${NEW_KEY:-0}" = 1 ]; then
   (cd "$STAGE" && tr -d '\n' < "$KEY_FILE" | npx -y wrangler@4 secret put ACCESS_KEY -c files-worker.jsonc)
 fi
 
+# Louis's machine gets the same files, for his own site.
+if [ "${NC2:-nc2}" != "-" ]; then
+  HOST=${NC2:-nc2} "$REPO/web/cloud/deploy-nc2.sh" files || echo "nc2 did not take the game files: the site uses the locked host"
+fi
+
+# WebSim runs server.js beside the page as the project's server (cloud saves).
+cp "$REPO/web/cloud/server.js" "$STAGE/page/server.js"
 cd "$STAGE/page"
 websim-cli projects sync "$PROJECT" --no-open -m "$MESSAGE"
+rm "$STAGE/page/server.js"
 
 # The same page on Louis's own site (its plain WASM Edition brand: the page
 # picks it from the host), a Worker of static assets only.

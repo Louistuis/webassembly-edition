@@ -26,11 +26,13 @@ A complete game client, not a remake of a few blocks: worlds generate, render, s
 game does, in survival or creative, with mobs, redstone, crafting, the inventory and the options screens you
 know. It is the Horizon client (a Rust rewrite of the game) compiled to `wasm32` and taught to live in a page:
 
-- **Instant play.** Open the page, press Play. Worlds are kept in your browser.
+- **Instant play.** Open the page, press Play.
 - **Sound.** Effects, ambience, music and records, fetched as they are needed so nobody waits for them.
 - **Multiplayer through WebSim.** Open your world to LAN from the pause menu and everyone on the WebSim page
   sees it in their Multiplayer list. The host checks guests the way a server does: reach, flying, speed,
   chat spam, packet floods, and names pinned to WebSim accounts.
+- **Cloud saves.** Worlds and settings are kept in the cloud as well as in your browser, so they are
+  there on any device, and you can share a world for friends to open later.
 - **Your own worlds, mods and packs.** Download a world as a zip, import one, add resource packs, and (beta)
   shader packs and content mods (new blocks, items and recipes) from the WASM Edition panel.
 - **Two homes.** On WebSim it is the *Minecraft WebSim WASM Edition*; on minecraft.lou15.com the same page

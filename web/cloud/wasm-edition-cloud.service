@@ -1,0 +1,39 @@
+# /etc/systemd/system/wasm-edition-cloud.service
+# Cloud saves and game files for minecraft.lou15.com on nc2 (web/cloud/serve.mjs).
+# cloudflared (nc2 tunnel 5d84f752) forwards mc-cloud.lou15.com to 127.0.0.1:8830.
+# App: /opt/wasm-edition-cloud. Data: /tank/nordcore-data/wasm-edition (cloud.sqlite,
+# chunks/, pack/). Installed by web/cloud/deploy-nc2.sh.
+[Unit]
+Description=WASM Edition cloud saves (mc-cloud.lou15.com)
+After=network-online.target zfs-mount.service
+Wants=network-online.target
+RequiresMountsFor=/tank
+OnFailure=nordcore-alert@%n.service
+
+[Service]
+Type=simple
+User=wasmedition
+Group=wasmedition
+WorkingDirectory=/opt/wasm-edition-cloud
+Environment=HOST=127.0.0.1 PORT=8830 NODE_ENV=production NODE_NO_WARNINGS=1
+Environment=DATA=/tank/nordcore-data/wasm-edition PACK=/tank/nordcore-data/wasm-edition/pack
+Environment=ACCESS_KEY_FILE=/etc/wasm-edition/access-key ORIGINS=https://minecraft.lou15.com QUOTA=1073741824
+ExecStart=/usr/bin/node /opt/wasm-edition-cloud/serve.mjs
+Restart=always
+RestartSec=3
+MemoryMax=320M
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/tank/nordcore-data/wasm-edition
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

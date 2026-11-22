@@ -12,6 +12,7 @@ It runs the same code as the native client; the differences below are all behind
 |---|---|
 | Start screen, boot, browser storage | `web/page/` (`index.html`, `start.css`, `boot.js`, `store.js`) |
 | Sound output | `web/page/audio.js` (the game's side: `crates/horizon-client/src/audio/web.rs`) |
+| Cloud saves | `web/page/cloud.js` (the page), `web/cloud/server.js` (the server: WebSim's, and through `serve.mjs` Louis's own), `web/cloud/deploy-nc2.sh` |
 | The edition's own pages: settings, mods and packs, worlds, credits | `web/page/edition.js` (`wasmEdition.open(tab, inWorld)`), opened from the game's title screen and options (`crates/horizon-client/src/web_edition.rs`) |
 | Logo | `web/page/logo.png`, rendered by `web/brand/logo.py` (only the word "websim" is Comic Sans; the rest is pixel lettering) |
 | std for the page: clock, console, files, arguments | `web/std/` (`apply.py` patches the toolchain's library sources, `sys/*.rs` replace four platform modules), `web/page/std.js` (the page's side) |
@@ -35,6 +36,21 @@ It runs the same code as the native client; the differences below are all behind
 - **Files** are an in-memory file system under `/horizon` (the working directory). The packed game files
   are listed up front and read the first time the game opens them. What the game writes outside the
   resources (worlds, `options.txt`) is kept in IndexedDB and restored on the next visit.
+- **Cloud saves** (`web/page/cloud.js`, `web/cloud/server.js`). The browser's storage stays the working
+  copy; a server keeps the player's worlds and their profile (options, packs, mods) as well, so they are
+  there on any device, and a world can be shared with everyone on the page. One server, two homes: on
+  WebSim it is the project's own (`server.js` beside the page, its database and file storage, the player
+  is their WebSim account); for minecraft.lou15.com it runs on Louis's machine (`web/cloud/serve.mjs`
+  runs the same code over SQLite and a folder; the player is a cloud code the browser made, typed into
+  another browser to link it). Files travel in 2 MB chunks named by their SHA-256, so a save sends only
+  what changed; a bundle (a world, or the profile) is a file list with a revision number, and the last
+  five revisions are kept. **Pull** happens when the page starts, before the game reads its files;
+  **push** while the game runs, once it has been quiet for 20 s (three minutes at most). A world changed
+  both here and in the cloud is a conflict the Worlds panel asks about; the profile follows whoever saved
+  last. A shared world can be saved by anyone who got it. Only holders of the access key get in, and
+  nothing of Mojang's is stored. The same machine hands the site its game files, key holders only, with
+  the locked file host as the fallback. `web/test/cloud-api.mjs` tests the server, `web/test/cloud.mjs`
+  the whole path with three browsers.
 - **GPU:** the page opens the device before the game starts (it cannot block), error scopes are polled
   once instead of waited on, every shader gets `diagnostic(off, derivative_uniformity)` (the native
   compiler does not apply that rule), sprite arrays respect the device's texture layer limit, and one

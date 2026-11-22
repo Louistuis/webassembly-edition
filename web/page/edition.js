@@ -16,6 +16,7 @@ import { state } from './std.js';
 import {
   KEPT, session, openStore, sizes, readAll, getFile, putFiles, removeTree, clearAll,
 } from './store.js';
+import * as cloud from './cloud.js';
 
 const edition = (globalThis.wasmEdition ??= {});
 const WEBSIM = edition.websim !== false;
@@ -51,6 +52,7 @@ const PIXELS = {
   people: ['...##...##..', '..####.####.', '..####.####.', '...##...##..', '............', '.####.#####.', '############', '############', '############'],
   spark: ['.....##.....', '.....##.....', '.....##.....', '....####....', '...######...', '############', '############', '...######...', '....####....', '.....##.....', '.....##.....', '.....##.....'],
   type: ['....####....', '...######...', '..###..###..', '..##....##..', '.###....###.', '.##########.', '.##########.', '###......###', '##........##'],
+  cloud: ['............', '....####....', '...######...', '.#########..', '###########.', '############', '############', '.##########.', '............'],
   eye: ['............', '....####....', '..########..', '.###.##.###.', '###.####.###', '###.####.###', '.###.##.###.', '..########..', '....####....'],
 };
 export function icon(name) {
@@ -389,7 +391,7 @@ async function renderSettings(panel) {
   const wipe = btn('Delete all saved data', { kind: 'ghost', icon: 'trash', onclick: () => { wipeBox.hidden = false; wipe.hidden = true; wipeBox.querySelector('button')?.focus(); } });
   if (inWorld) { wipe.disabled = true; wipe.title = 'Save and quit to the title screen first.'; }
   wipeBox.append(
-    h('p', {}, h('strong', {}, 'Delete everything?'), ' Every world, setting, mod and pack saved in this browser goes away for good. This cannot be undone.'),
+    h('p', {}, h('strong', {}, 'Delete everything?'), ` Every world, setting, mod and pack saved in this browser goes away for good. This cannot be undone.${cloud.view().status === 'ready' ? ' Worlds already in your cloud stay there: get them back, or delete them, under Worlds.' : ''}`),
     h('div', { class: 'ed-row' },
       btn('Delete everything', { kind: 'red', icon: 'trash', onclick: async (e) => {
         e.currentTarget.disabled = true;
@@ -419,7 +421,9 @@ async function renderSettings(panel) {
     card({}, cardTitle('View distance', 'eye', 'green'), h('div', { class: 'ed-row spread' }, h('span', { class: 'ed-label' }, 'Chunks'), segs), distanceNote),
     multiplayer,
     card({}, cardTitle('Storage', 'storage', 'yellow'), h('div', { class: 'ed-row spread' }, h('span', { class: 'ed-label' }, 'This page'), used), meter,
-      note('Worlds, settings, mods and packs are kept in this browser only. Download a world to keep a copy.'),
+      note(cloud.view().status === 'ready'
+        ? 'Worlds, settings, mods and packs are kept in this browser and saved to your cloud.'
+        : 'Worlds, settings, mods and packs are kept in this browser only. Download a world to keep a copy.'),
       h('div', { class: 'ed-row' }, wipe), wipeBox),
     card({}, cardTitle('Access key', 'key', 'red'), keyNote, h('div', { class: 'ed-row' }, forget)),
     card({}, cardTitle('Restart', 'restart', 'blue'),
@@ -432,6 +436,7 @@ async function wipeAll() {
   const store = await db();
   if (session.started) session.blocked.add('/horizon/'); // the running game saves nothing more
   await clearAll(store);
+  await cloud.wiped();
   for (const key of ['horizon.viewDistance', 'horizon.name']) local.remove(key);
   dispatchEvent(new CustomEvent('wasmedition:distance', { detail: 6 }));
   if (!session.started) {
@@ -605,11 +610,45 @@ async function listWorlds() {
   return out.sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || a.folder.localeCompare(b.folder));
 }
 
+// What the cloud says about a world, in a few words.
+function cloudLine(c) {
+  if (!c) return '';
+  const who = c.mine ? '' : (c.owner ? `, shared by ${c.owner}` : ', shared');
+  switch (c.status) {
+    case 'saving': return `Saving to the cloud${c.progress ? ` ${Math.round(c.progress * 100)}%` : ''}`;
+    case 'waiting': return 'Waiting to save to the cloud';
+    case 'conflict': return `Changed in the cloud too${c.conflict?.by ? ` (${c.conflict.by})` : ''}. Keep which one?`;
+    case 'full': return 'Not saved: the cloud is full';
+    case 'error': return `Not saved to the cloud: ${c.error}`;
+    case 'gone': return 'No longer in the cloud';
+    default: return `In the cloud${c.mine && c.shared ? ', shared with everyone here' : who}`;
+  }
+}
+
+let worldsMessage = null; // what the next redraw of Worlds says (a cloud action finished)
 async function renderWorlds(panel, message = '', problem = false) {
   worldUrls.splice(0).forEach((u) => URL.revokeObjectURL(u));
+  if (!message && worldsMessage) { [message, problem] = worldsMessage; }
+  worldsMessage = null;
   const worlds = await listWorlds();
+  const cv = cloud.view();
+  const ready = cv.status === 'ready';
+  const inCloud = new Map(ready ? cv.items.filter((i) => i.folder).map((i) => [i.folder, i]) : []);
   const status = h('p', { class: 'ed-status', role: 'status', 'aria-live': 'polite' }, message);
   status.classList.toggle('bad', problem);
+  // A cloud action: its button waits, then the list says how it went.
+  const act = (button, doing, work, done) => async () => {
+    button.disabled = true;
+    status.classList.remove('bad');
+    status.textContent = doing;
+    try {
+      const said = await work((text) => { status.textContent = text; });
+      worldsMessage = [typeof said === 'string' ? said : done, false];
+    } catch (e) {
+      worldsMessage = [e.message || String(e), true];
+    }
+    await renderWorlds(panel);
+  };
   const input = h('input', { type: 'file', accept: '.zip,application/zip', hidden: true });
   const importBtn = btn('Import a world', { kind: 'green', size: 'small', icon: 'upload', onclick: () => input.click() });
   if (inWorld) { importBtn.disabled = true; importBtn.title = 'Save and quit to the title screen first.'; }
@@ -653,23 +692,137 @@ async function renderWorlds(panel, message = '', problem = false) {
       }
       download.disabled = false;
     } });
-    const del = confirmButton('Delete', 'Delete forever?', async () => {
+    const c = inCloud.get(w.folder);
+    const del = confirmButton('Delete', c?.inCloud && c.mine ? 'Delete here?' : 'Delete forever?', async () => {
       await removePath(`${SAVES}${w.folder}`, { world: true });
-      await renderWorlds(panel, `Deleted "${title}".${session.started ? ' The game forgets it when it restarts.' : ''}`);
+      cloud.changedFolder(w.folder, true);
+      await renderWorlds(panel, `Deleted "${title}"${c?.inCloud ? ' from this browser. It is still in the cloud.' : '.'}${session.started ? ' The game forgets it when it restarts.' : ''}`);
     }, { 'aria-label': `Delete ${title}` });
     if (inWorld) { del.disabled = true; del.title = 'Save and quit to the title screen first.'; }
+    const extra = [];
+    if (c?.status === 'conflict') {
+      const mine = btn('Keep mine', { kind: 'green', 'aria-label': `Keep this browser's ${title}` });
+      mine.onclick = act(mine, `Saving "${title}" to the cloud...`, () => cloud.keepMine(c.id), `"${title}" from this browser is now the cloud's copy.`);
+      const theirs = btn("Take cloud's", { kind: 'ghost', 'aria-label': `Take the cloud's ${title}` });
+      theirs.onclick = act(theirs, `Getting "${title}" from the cloud...`, async (say) => {
+        await cloud.fetchWorld(c.id, (done, total) => say(`Getting "${title}": ${formatSize(done)} of ${formatSize(total)}`));
+        changed();
+      }, `Took the cloud's "${title}".${session.started ? ' Restart to play it.' : ''}`);
+      if (inWorld) { theirs.disabled = true; theirs.title = 'Save and quit to the title screen first.'; }
+      extra.push(mine, theirs);
+    } else if (c?.status === 'gone' || c?.status === 'full' || c?.status === 'error') {
+      const up = btn(c.status === 'gone' ? 'Save to cloud' : 'Try again', { kind: 'ghost', icon: 'upload', 'aria-label': `Save ${title} to the cloud` });
+      up.onclick = act(up, `Saving "${title}" to the cloud...`, async () => {
+        await (c.status === 'gone' ? cloud.upload(c.id) : cloud.syncNow(c.id));
+        const now = cloud.view().items.find((i) => i.id === c.id);
+        if (now && (now.status === 'error' || now.status === 'full')) throw new Error(cloudLine(now));
+      }, `Saved "${title}" to the cloud.`);
+      extra.push(up);
+    } else if (c?.inCloud && c.mine && (c.status === 'synced' || c.status === 'waiting')) {
+      const share = btn(c.shared ? 'Stop sharing' : 'Share', { kind: 'ghost', icon: 'people', 'aria-label': `${c.shared ? 'Stop sharing' : 'Share'} ${title}` });
+      share.onclick = act(share, c.shared ? 'Stopping...' : 'Sharing...', () => cloud.share(c.id, !c.shared),
+        c.shared ? `"${title}" is yours alone again.` : `Everyone on this page can now get "${title}" and save to it.`);
+      extra.push(share);
+    }
+    const line = cloudLine(c);
     list.append(h('li', {}, thumb,
-      h('div', { class: 'ed-world-text' }, h('strong', { title }, title), h('span', {}, meta), !w.hasLevel ? h('span', { class: 'ed-warn' }, 'No level.dat: this may not open.') : null),
-      h('div', { class: 'ed-world-actions' }, download, del)));
+      h('div', { class: 'ed-world-text' }, h('strong', { title }, title), h('span', {}, meta),
+        line ? h('span', { class: `ed-cloud ${c.status}` }, h('span', { class: 'ed-cloud-icon', html: icon('cloud') }), line) : null,
+        !w.hasLevel ? h('span', { class: 'ed-warn' }, 'No level.dat: this may not open.') : null),
+      h('div', { class: 'ed-world-actions' }, ...extra, download, del)));
   }
+
+  // Worlds in the cloud that are not on this device: the player's own, and shared ones.
+  const cloudRow = (c) => {
+    const title = c.name;
+    const by = c.updated_by && c.updated_by !== cv.me?.name ? ` by ${c.updated_by}` : '';
+    const meta = [c.mine ? null : `shared by ${c.owner || 'someone'}`, formatSize(c.size), c.updated_at ? `saved ${when(c.updated_at)}${by}` : null].filter(Boolean).join(' · ');
+    const get = btn(c.mine ? 'Get' : 'Add to my worlds', { kind: 'green', icon: 'download', 'aria-label': `Get ${title}` });
+    get.onclick = act(get, `Getting "${title}" from the cloud...`, async (say) => {
+      await cloud.fetchWorld(c.id, (done, total) => say(`Getting "${title}": ${formatSize(done)} of ${formatSize(total)}`));
+      changed();
+    }, `Got "${title}".${session.started ? ' Restart to play it.' : ''}`);
+    const actions = [get];
+    if (c.mine) {
+      actions.push(confirmButton('Delete', 'Delete from cloud?', async () => {
+        try {
+          await cloud.removeFromCloud(c.id);
+          worldsMessage = [`Deleted "${title}" from the cloud.`, false];
+        } catch (e) { worldsMessage = [e.message || String(e), true]; }
+        await renderWorlds(panel);
+      }, { 'aria-label': `Delete ${title} from the cloud` }));
+    }
+    return h('li', {}, h('span', { class: 'ed-thumb ed-thumb-blank ed-thumb-cloud', html: icon('cloud') }),
+      h('div', { class: 'ed-world-text' }, h('strong', { title }, title), h('span', {}, meta)),
+      h('div', { class: 'ed-world-actions' }, ...actions));
+  };
+  const away = ready ? cv.items.filter((i) => !i.folder) : [];
+  const mineAway = away.filter((i) => i.mine);
+  const sharedAway = away.filter((i) => !i.mine);
+  const cloudCards = [];
+  if (mineAway.length) {
+    cloudCards.push(card({}, cardTitle('In your cloud', 'cloud', 'blue', chip(String(mineAway.length), 'plain')),
+      note('Saved to the cloud, not on this device.'), h('ul', { class: 'ed-worlds' }, ...mineAway.map(cloudRow))));
+  }
+  if (sharedAway.length) {
+    cloudCards.push(card({}, cardTitle('Shared worlds', 'people', 'green', chip(String(sharedAway.length), 'plain')),
+      note('Worlds other players share. Add one to play it; what you save goes back to the same world for everyone.'),
+      h('ul', { class: 'ed-worlds' }, ...sharedAway.map(cloudRow))));
+  }
+  cloudCards.push(cloudCard(cv, panel));
   const drop = card({ class: 'ed-card ed-drop' },
     cardTitle('Your worlds', 'worlds', 'green', worlds.length ? chip(String(worlds.length), 'plain') : null),
     list,
     h('div', { class: 'ed-row' }, importBtn, h('span', { class: 'ed-hint' }, inWorld ? 'Save and quit to the title screen to import or delete.' : 'A .zip with level.dat inside, up to 512 MB')),
     input, status);
   if (!inWorld) dropTarget(drop, doImport);
-  panel.replaceChildren(heading('Worlds', 'Kept in this browser. Download a world to back it up or move it.'), drop);
+  panel.replaceChildren(heading('Worlds', ready ? 'Kept in this browser and saved to your cloud.' : 'Kept in this browser. Download a world to back it up or move it.'), drop, ...cloudCards.filter(Boolean));
 }
+
+// Who the cloud knows the player as, how full it is, and (on the plain site)
+// the code that links another browser.
+function cloudCard(cv, panel) {
+  if (cv.status === 'off') return null;
+  const title = cardTitle('Cloud saves', 'cloud', 'blue');
+  if (cv.status === 'guest') return card({}, title, note(cv.websim ? 'Sign in to WebSim to keep your worlds in the cloud and get them on any device.' : 'Cloud saves are not available in this browser.'));
+  if (cv.status !== 'ready') return card({}, title, note(cv.message || 'The cloud is not answering right now. Your worlds are safe in this browser and will save when it is back.'));
+  const used = cv.quota ? h('div', { class: 'ed-row spread' }, h('span', { class: 'ed-label' }, 'Space'), h('span', {}, `${formatSize(cv.quota.used)} of ${formatSize(cv.quota.max)} used`)) : null;
+  const meter = cv.quota ? h('div', { class: 'ed-meter' }, h('i')) : null;
+  if (meter) meter.firstChild.style.width = `${Math.max(1.5, Math.min(100, (100 * cv.quota.used) / cv.quota.max))}%`;
+  if (cv.websim) {
+    return card({}, title, note(`Signed in as ${cv.me?.name || 'you'}. Your worlds and settings save to your WebSim account while you play and follow you to any device.`), used, meter);
+  }
+  // The plain site has no accounts: a code stands for the player.
+  const say = h('p', { class: 'ed-status', role: 'status', 'aria-live': 'polite' });
+  const copy = btn('Copy my cloud code', { kind: 'ghost', icon: 'key', onclick: async () => {
+    try { await navigator.clipboard.writeText(cv.code); say.textContent = 'Copied. Paste it into the other browser, under Worlds.'; } catch { say.textContent = `Your cloud code: ${cv.code}`; }
+  } });
+  const input = h('input', { class: 'mc-field', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'A cloud code from another browser', 'aria-label': 'A cloud code from another browser' });
+  const link = btn('Use this code', { kind: 'ghost', onclick: async () => {
+    say.classList.remove('bad');
+    try {
+      await cloud.useCode(input.value.trim());
+      say.textContent = 'Linked. Restarting...';
+      setTimeout(() => location.reload(), 600);
+    } catch (e) { say.textContent = e.message || String(e); say.classList.add('bad'); }
+  } });
+  if (inWorld) { link.disabled = true; link.title = 'Save and quit to the title screen first.'; }
+  return card({}, title,
+    note('Your worlds and settings save to the cloud while you play. This browser has a cloud code: use it in another browser to get your worlds there. Anyone with the code has your saves, so keep it to yourself.'),
+    used, meter, h('div', { class: 'ed-row' }, copy), h('div', { class: 'ed-row' }, input, link), say);
+}
+
+// The cloud moves on while the panel is open: Worlds follows, once a second at most.
+let cloudRedraw = 0;
+cloud.on(() => {
+  if (cloudRedraw || !dialog.open || current !== 'worlds') return;
+  cloudRedraw = setTimeout(() => {
+    cloudRedraw = 0;
+    // Not under the player's hands: a button being confirmed, a field being typed in.
+    const busy = panels.worlds.querySelector('button:disabled:not([title]), .ed-world-actions .red, input:focus');
+    if (dialog.open && current === 'worlds' && !busy) renderWorlds(panels.worlds).catch(() => {});
+  }, 1000);
+});
 
 async function downloadWorld(folder) {
   const { keys, values } = await readAll(await db(), `${SAVES}${folder}/`);
@@ -710,6 +863,7 @@ async function importWorld(file) {
     out.push([`${SAVES}${folder}/${rel}`, await unzipEntry(bytes, e)]);
   }
   await writeFiles(out);
+  cloud.changedFolder(folder, false);
   return folder;
 }
 

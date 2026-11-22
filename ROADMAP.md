@@ -12,6 +12,8 @@ Where Minecraft WebSim WASM Edition stands and what comes after. The engine's ow
 - Resource packs. Shader packs and content mods (beta).
 - Sound: effects, ambience, music and records, with the game's own Music & Sounds sliders. Sound files come
   as they are needed (a sound's very first play can be silent while its files arrive).
+- Cloud saves: worlds and settings follow you to any device (your WebSim account on WebSim, a cloud code
+  on minecraft.lou15.com), and a world can be shared so friends open it later without you.
 - Two homes: WebSim, and minecraft.lou15.com with its own plain brand.
 
 ## Next

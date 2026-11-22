@@ -5,6 +5,7 @@ import init, { horizon_start } from './horizon.js';
 import * as game from './horizon.js';
 import { startNet } from './net.js';
 import { startAudio } from './audio.js';
+import * as cloud from './cloud.js';
 import { state, lines, useExports, counters } from './std.js';
 import { RESOURCES, KEPT, session, isBlocked, openStore, readAll, tx } from './store.js';
 // The game files: beside the page in tests, or on the locked file host that
@@ -162,6 +163,7 @@ globalThis.horizon = {
 async function restore(db) {
   const { keys, values } = await readAll(db);
   keys.forEach((path, i) => {
+    if (!String(path).startsWith('/')) return; // the page's own notes (cloud.js), not a file
     if (path.endsWith('/')) state.folders.add(path);
     else state.files.set(path, values[i]);
   });
@@ -189,19 +191,45 @@ function keep(db) {
     if (!KEPT(path) || isBlocked(path)) return;
     queue.set(path, bytes ?? new Uint8Array(0));
     later();
+    if (bytes) cloud.touched(path);
   };
   state.onForget = (path) => {
     if (!KEPT(path) || isBlocked(path)) return;
     for (const key of [...queue.keys()]) if (key === path || key.startsWith(path + '/')) queue.delete(key);
     queue.set(path, undefined);
     later();
+    cloud.forgot(path);
   };
   addEventListener('pagehide', () => { if (timer) { clearTimeout(timer); flush(); } });
 }
 
 // ---- the game's files ----
 let accessKey = null;
-const fetchFile = (name, options = {}) => fetch(new URL(name, PACK), LOCKED ? { ...options, headers: { 'x-access-key': accessKey ?? '' } } : options);
+// Where the files are: the locked host. On Louis's own site his machine has
+// them too (HORIZON_CLOUD, web/cloud/serve.mjs) and is asked first; if it is
+// away, the locked host answers for the rest of the visit.
+const hosts = [PACK];
+if (globalThis.wasmEdition?.websim === false && globalThis.HORIZON_CLOUD && LOCKED) {
+  hosts.unshift(new URL('files/', `${String(globalThis.HORIZON_CLOUD).replace(/\/$/, '')}/`));
+}
+let host = 0;
+async function fetchFile(name, options = {}) {
+  const init = LOCKED ? { ...options, headers: { 'x-access-key': accessKey ?? '' } } : options;
+  for (;;) {
+    const asked = host;
+    const last = asked === hosts.length - 1;
+    try {
+      const response = await fetch(new URL(name, hosts[asked]), init);
+      if (response.status < 500 || last) return response;
+    } catch (e) {
+      if (last) throw e;
+    }
+    if (host === asked) {
+      host += 1;
+      console.warn('Horizon: the first file host is away, using the other one');
+    }
+  }
+}
 
 async function fetchChunk(chunk, onBytes) {
   const response = await fetchFile(chunk.name);
@@ -409,6 +437,12 @@ async function prepare() {
     console.warn('Horizon: no browser storage, worlds will not be kept', e);
   }
   const { sounds } = await loadResources(index);
+  // The player's saves in the cloud, where they are newer than this browser's.
+  if (db) {
+    status.textContent = 'Checking your cloud saves';
+    await cloud.start({ key: accessKey, websim: WEBSIM, name: store.get('horizon.name'), say: (text) => { status.textContent = text; } })
+      .catch((e) => console.warn('Horizon: no cloud saves', e));
+  }
   status.textContent = 'Starting the game';
   return { module, sounds };
 }
@@ -450,12 +484,15 @@ async function main() {
   useExports(wasm);
   startNet(game, accessKey);
   startAudio(game);
+  cloud.setName(nameOf());
+  cloud.begin();
   setTimeout(() => sounds.prefetch(), 8000);
   // Tests drive the game with its agent-control commands (docs/agent-control.md);
   // only test runs (`?args=`) get them, so nothing else on the page can.
   if (urlArgs !== null) {
     globalThis.horizon.command = game.horizon_command;
     globalThis.horizon.replies = game.horizon_replies;
+    globalThis.horizon.cloud = cloud;
   }
   // The start screen crossfades to the game once its canvas is on the page and
   // has drawn (a couple of frames in, so the first picture is complete).
