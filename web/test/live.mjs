@@ -1,7 +1,8 @@
 // The published copy end to end: opens URL, enters the access key (ACCESS_KEY
 // env) when asked, presses Play if the page asks, waits for the game, saves
 // OUT-canvas.png. Then clicks the game once (a browser opens sound only after
-// that) and waits for the title music: prints what the page's output did.
+// that) and waits for the title music: prints what the page's output did,
+// what the Worlds panel says about cloud saves, and which file host answered.
 //   node test/live.mjs URL OUT [seconds]
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -55,6 +56,17 @@ if (await canvas.count()) {
   }
   console.log('sound', JSON.stringify(sound), sound.state === 'running' && sound.decoded >= 1 && sound.peak > 0.001 ? 'OK' : 'SILENT');
 }
+// Cloud saves, as the Worlds panel tells it, and which file host answered.
+const worlds = await frame.evaluate(async () => {
+  globalThis.wasmEdition?.open?.('worlds', false);
+  await new Promise((r) => setTimeout(r, 3000));
+  const text = document.querySelector('#ed-panel-worlds')?.innerText ?? '';
+  globalThis.wasmEdition?.close?.();
+  return text;
+}).catch((e) => String(e));
+const cloudLine = /Cloud saves[\s\S]{0,160}/.exec(worlds)?.[0].replace(/\s+/g, ' ') ?? 'no cloud card';
+console.log('cloud', cloudLine.slice(0, 200));
+console.log('file host', log.some((l) => l.includes('first file host is away')) ? 'FELL BACK to the locked host' : 'the first one answered');
 const shot = await frame.evaluate(() => Promise.race([globalThis.horizon.snapshot(), new Promise((r) => setTimeout(() => r('none'), 30000))])).catch((e) => String(e));
 if (shot?.startsWith('data:image/png;base64,')) fs.writeFileSync(`${out}-canvas.png`, Buffer.from(shot.slice(22), 'base64'));
 await page.screenshot({ path: `${out}.png` });
